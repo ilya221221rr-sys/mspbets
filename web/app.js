@@ -96,9 +96,9 @@ async function loadAdminUsers() {
   if (!me?.is_admin) return;
   
   const userSelect = $("give-user-id");
-  const skinUserSelect = $("skin-user-id");
+  const settingsUserSelect = $("settings-user-id");
   
-  if (userSelect || skinUserSelect) {
+  if (userSelect || settingsUserSelect) {
     try {
       const users = await api("/api/admin/users");
       const userOptions = `<option value="" disabled selected>Выберите игрока...</option>` + 
@@ -109,15 +109,15 @@ async function loadAdminUsers() {
         }).join("");
         
       if (userSelect) userSelect.innerHTML = userOptions;
-      if (skinUserSelect) skinUserSelect.innerHTML = userOptions;
+      if (settingsUserSelect) settingsUserSelect.innerHTML = userOptions;
     } catch(e) { console.error(e); }
   }
 
-  const skinSelect = $("skin-select");
+  const skinSelect = $("force-skin-select");
   if (skinSelect) {
     try {
       const skins = await api("/api/admin/all-skins");
-      skinSelect.innerHTML = `<option value="" disabled selected>Выберите скин...</option>` + 
+      skinSelect.innerHTML = `<option value="">Случайный скин (по шансам)</option>` + 
         skins.map(s => `<option value="${s.id}">${escapeHtml(s.name)} — ${s.price} PTS</option>`).join("");
     } catch(e) { console.error(e); }
   }
@@ -227,19 +227,19 @@ $("create-promo")?.addEventListener("submit", async e => {
   } catch (err) { toast(err.message); }
 });
 
-$("give-skin-form")?.addEventListener("submit", async e => {
+// НОВЫЙ ОБРАБОТЧИК НАСТРОЕК
+$("user-settings-form")?.addEventListener("submit", async e => {
   e.preventDefault();
   try {
-    const data = await api("/api/admin/give-skin", {
+    const data = await api("/api/admin/user-settings", {
       method: "POST",
       body: JSON.stringify({
-        user_id: Number($("skin-user-id").value),
-        skin_id: Number($("skin-select").value),
-        force_next: $("force-next-case").checked
+        user_id: Number($("settings-user-id").value),
+        forced_skin_id: $("force-skin-select").value,
+        custom_chance: Number($("custom-chance").value)
       })
     });
-    $("give-skin-form").reset();
-    toast(data.message || "Скин выдан!");
+    toast(data.message || "Настройки сохранены!");
   } catch (err) {
     toast(err.message);
   }
@@ -424,13 +424,4 @@ async function refresh(){await loadMe();await loadEvents()}
 })();
 
 setInterval(async () => {
-  if (document.getElementById("matches").classList.contains("hidden") === false) {
-    try {
-      const newEvents = await api("/api/events");
-      if (JSON.stringify(newEvents) !== JSON.stringify(events)) {
-        events = newEvents;
-        loadEvents();
-      }
-    } catch(e) {}
-  }
-}, 15000);
+  if (document.getElementById("matches").classList.contains("hidden") ===
