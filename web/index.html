@@ -52,7 +52,9 @@
 
       <div class="section-title sub">ВЫДАТЬ БАЛЛЫ ИГРОКУ</div>
       <form id="give-points" class="admin-form" style="margin-bottom: 24px;">
-        <input id="give-user-id" type="number" placeholder="Telegram ID игрока (цифры)" required>
+        <select id="give-user-id" required>
+          <option value="" disabled selected>Загружаем игроков...</option>
+        </select>
         <input id="give-amount" type="number" min="1" max="100000" placeholder="Сумма баллов" required>
         <button class="primary" type="submit">Начислить баллы</button>
       </form>
