@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MSPBETS</title>
+  <link rel="stylesheet" href="/web/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div class="glow"></div>
+  <header>
+    <div class="brand">MSP<span>BETS</span></div>
+    <div class="balance"><small>БАЛАНС</small><b id="balance">—</b> <span>PTS</span></div>
+  </header>
+  <main>
+    <section class="hero">
+      <div class="eyebrow">SPORTS PREDICTIONS</div>
+      <h1>ТВОЯ ИГРА.<br><span>ТВОИ БАЛЛЫ.</span></h1>
+      <p>Делай прогнозы на матчи и поднимайся в рейтинге.</p>
+      <small class="disclaimer">Только виртуальные баллы. Без денежных ставок и вывода средств.</small>
+    </section>
+    <nav>
+      <button class="tab active" data-tab="matches">Матчи</button>
+      <button class="tab" data-tab="rating">Рейтинг</button>
+      <button class="tab admin-only hidden" data-tab="admin">Админка</button>
+    </nav>
+    <section id="matches" class="panel">
+      <div class="section-title">АКТИВНЫЕ МАТЧИ</div>
+      <div id="event-list"><div class="empty">Загружаем матчи...</div></div>
+    </section>
+    <section id="rating" class="panel hidden">
+      <div class="section-title">ТОП ИГРОКОВ</div>
+      <div id="rating-list" class="empty">Загружаем рейтинг...</div>
+    </section>
+    <section id="admin" class="panel hidden">
+      <div class="section-title">АДМИН-ПАНЕЛЬ</div>
+      <form id="create-event" class="admin-form">
+        <select id="sport"><option>CS2</option><option>Dota 2</option><option>Футбол</option><option>Теннис</option></select>
+        <input id="title" placeholder="Например: Team A — Team B" required>
+        <input id="starts" placeholder="Дата и время (текстом)">
+        <input id="multiplier" type="number" min="1" max="10" step="0.1" value="2">
+        <button class="primary" type="submit">Добавить матч</button>
+      </form>
+      <div class="section-title sub">РАСЧЁТ МАТЧЕЙ</div>
+      <div id="settle-list"></div>
+    </section>
+  </main>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/web/app.js"></script>
+</body>
+</html>
