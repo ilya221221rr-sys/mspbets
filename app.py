@@ -66,10 +66,11 @@ async def init_db():
             user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT,
             balance INTEGER NOT NULL DEFAULT 1000, created_at TEXT NOT NULL
         )""")
+        # ОБНОВЛЕННАЯ ТАБЛИЦА СОБЫТИЙ
         await db.execute("""CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT, sport TEXT NOT NULL,
             title TEXT NOT NULL, starts_at TEXT, status TEXT NOT NULL DEFAULT 'open',
-            result TEXT, reward_multiplier REAL NOT NULL DEFAULT 2.0,
+            result TEXT, odds_1 REAL NOT NULL DEFAULT 2.0, odds_x REAL, odds_2 REAL NOT NULL DEFAULT 2.0,
             created_at TEXT NOT NULL
         )""")
         await db.execute("""CREATE TABLE IF NOT EXISTS predictions (
@@ -101,7 +102,6 @@ async def start_message(message):
         "🏆 <b>MSPBETS</b>\n\nДелай прогнозы на матчи, получай виртуальные баллы и поднимайся в рейтинге!\nБаллы не имеют денежной стоимости, их нельзя купить или вывести.",
         reply_markup=None
     )
-    # The persistent menu button opens the Mini App.
     await bot.set_chat_menu_button(
         chat_id=message.chat.id,
         menu_button=MenuButtonWebApp(text="Открыть MSPBETS", web_app=WebAppInfo(url=BOT_WEBAPP_URL))
@@ -157,7 +157,9 @@ async def events(request: Request):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("""
-            SELECT e.*, p.choice AS my_choice, p.points AS my_points, p.status AS my_status
+            SELECT e.id, e.sport, e.title, e.starts_at, e.status, e.result,
+                   e.odds_1, e.odds_x, e.odds_2,
+                   p.choice AS my_choice, p.points AS my_points, p.status AS my_status
             FROM events e LEFT JOIN predictions p ON p.event_id=e.id AND p.user_id=?
             ORDER BY CASE WHEN e.status='open' THEN 0 ELSE 1 END, e.id DESC
         """, (uid,))
@@ -176,8 +178,7 @@ async def predict(request: Request):
         raise HTTPException(400, "Проверьте данные прогноза")
     if points < 1 or points > 1000:
         raise HTTPException(400, "Можно использовать от 1 до 1000 баллов")
-    if choice not in ("1", "X", "2"):
-        raise HTTPException(400, "Недопустимый вариант")
+    
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("BEGIN IMMEDIATE")
         cur = await db.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
@@ -185,11 +186,20 @@ async def predict(request: Request):
         if not row:
             await db.rollback()
             raise HTTPException(400, "Пользователь не найден")
-        cur = await db.execute("SELECT status FROM events WHERE id=?", (event_id,))
+        
+        cur = await db.execute("SELECT sport, status FROM events WHERE id=?", (event_id,))
         event = await cur.fetchone()
-        if not event or event[0] != "open":
+        if not event or event[1] != "open":
             await db.rollback()
             raise HTTPException(400, "Приём прогнозов закрыт")
+            
+        # ПРОВЕРКА ИСХОДОВ ПО ВИДУ СПОРТА
+        sport = event[0]
+        allowed = {"1", "2"} if sport in ("CS2", "Dota 2", "Теннис") else {"1", "X", "2"}
+        if choice not in allowed:
+            await db.rollback()
+            raise HTTPException(400, f"Для {sport} доступны исходы: {', '.join(sorted(allowed))}")
+            
         if row[0] < points:
             await db.rollback()
             raise HTTPException(400, "Недостаточно баллов")
@@ -221,19 +231,48 @@ async def create_event(request: Request):
     sport = str(body.get("sport", "")).strip()
     title = str(body.get("title", "")).strip()
     starts_at = str(body.get("starts_at", "")).strip()
+    
     try:
-        multiplier = float(body.get("reward_multiplier", 2))
+        o1 = float(body.get("odds_1", 2.0))
+        o2 = float(body.get("odds_2", 2.0))
+        ox_raw = body.get("odds_x")
+        ox = float(ox_raw) if ox_raw is not None else None
     except Exception:
-        multiplier = 2
+        raise HTTPException(400, "Ошибка в коэффициентах")
+
     if sport not in ("CS2", "Dota 2", "Футбол", "Теннис") or not title:
         raise HTTPException(400, "Укажите дисциплину и название матча")
-    if not 1 <= multiplier <= 10:
-        raise HTTPException(400, "Множитель должен быть от 1 до 10")
+    
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("INSERT INTO events(sport,title,starts_at,reward_multiplier,created_at) VALUES(?,?,?,?,?)",
-                         (sport, title, starts_at, multiplier, datetime.now(timezone.utc).isoformat()))
+        await db.execute("INSERT INTO events(sport,title,starts_at,odds_1,odds_x,odds_2,created_at) VALUES(?,?,?,?,?,?,?)",
+                         (sport, title, starts_at, o1, ox, o2, datetime.now(timezone.utc).isoformat()))
         await db.commit()
     return {"ok": True}
+
+# НОВЫЙ ЭНДПОИНТ ДЛЯ НАЧИСЛЕНИЯ БАЛЛОВ
+@app.post("/api/admin/give-points")
+async def give_points(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    if uid not in ADMIN_IDS:
+        raise HTTPException(403, "Нет доступа")
+    body = await request.json()
+    try:
+        target_id = int(body.get("user_id", 0))
+        amount = int(body.get("amount", 0))
+    except Exception:
+        raise HTTPException(400, "Неверный формат данных")
+        
+    if amount < 1 or amount > 100000:
+        raise HTTPException(400, "Можно начислить от 1 до 100 000 баллов")
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute("SELECT user_id FROM users WHERE user_id=?", (target_id,))
+        if not await cur.fetchone():
+            raise HTTPException(404, "Пользователь не найден (он должен сначала зайти в Mini App)")
+        await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (amount, target_id))
+        await db.commit()
+    return {"ok": True, "message": f"Начислено {amount} баллов ID {target_id}"}
 
 @app.post("/api/admin/events/{event_id}/settle")
 async def settle_event(event_id: int, request: Request):
@@ -245,24 +284,32 @@ async def settle_event(event_id: int, request: Request):
     result = str(body.get("result", ""))
     if result not in ("1", "X", "2"):
         raise HTTPException(400, "Результат должен быть 1, X или 2")
+        
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("BEGIN IMMEDIATE")
         db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT status,reward_multiplier FROM events WHERE id=?", (event_id,))
+        cur = await db.execute("SELECT status, odds_1, odds_x, odds_2 FROM events WHERE id=?", (event_id,))
         event = await cur.fetchone()
         if not event or event["status"] != "open":
             await db.rollback()
             raise HTTPException(400, "Матч уже рассчитан или не найден")
+            
         await db.execute("UPDATE events SET status='settled', result=? WHERE id=?", (result, event_id))
         cur = await db.execute("SELECT user_id,points,choice FROM predictions WHERE event_id=?", (event_id,))
         predictions = await cur.fetchall()
+        
         for p in predictions:
-            if p["choice"] == result:
-                reward = int(p["points"] * event["reward_multiplier"])
+            # ВЫПЛАТА ПО КОЭФФИЦИЕНТУ ИСХОДА
+            odds_map = {"1": event["odds_1"], "X": event["odds_x"], "2": event["odds_2"]}
+            odds = odds_map.get(p["choice"])
+            
+            if p["choice"] == result and odds:
+                reward = int(p["points"] * odds)
                 await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (reward, p["user_id"]))
                 await db.execute("UPDATE predictions SET status='won' WHERE user_id=? AND event_id=?", (p["user_id"], event_id))
             else:
                 await db.execute("UPDATE predictions SET status='lost' WHERE user_id=? AND event_id=?", (p["user_id"], event_id))
+                
         await db.commit()
     return {"ok": True, "settled": len(predictions)}
 
