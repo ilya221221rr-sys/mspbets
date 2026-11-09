@@ -8,7 +8,6 @@
   <style>
     .history-card { background: #1a1a1a; border: 1px solid #333; padding: 10px; border-radius: 6px; margin-bottom: 8px; font-size: 13px; }
     .history-title { font-weight: bold; color: #fff; }
-    .history-status { font-weight: bold; }
     .crash-graph { width: 100%; height: 150px; background: #111; border: 1px solid #333; border-radius: 8px; margin: 10px 0; position: relative; overflow: hidden; }
     .crash-multiplier { font-size: 36px; font-weight: bold; text-align: center; margin: 10px 0; }
   </style>
@@ -28,23 +27,21 @@
       <button class="tab" data-tab="crash">Краш</button>
       <button class="tab" data-tab="history">История</button>
       <button class="tab" data-tab="cases">Кейсы</button>
+      <button class="tab" data-tab="rating">Рейтинг</button>
       <button class="tab admin-only hidden" data-tab="admin">Админка</button>
     </nav>
 
-    <section id="matches" class="panel">
-      <div id="event-list"></div>
-    </section>
+    <section id="matches" class="panel"><div id="event-list"></div></section>
 
     <section id="crash" class="panel hidden">
       <div class="section-title">КРАШ</div>
       <div class="crash-graph" id="crash-graph-container">
-        <div id="crash-line" style="position: absolute; bottom: 0; left: 0; height: 0; width: 100%; background: linear-gradient(to right, rgba(85,255,0,0.2), #55ff00); border-radius: 4px; transition: height 0.05s;"></div>
+        <div id="crash-line" style="position: absolute; bottom: 0; left: 0; height: 0; width: 100%; background: linear-gradient(to right, rgba(85,255,0,0.2), #55ff00); transition: height 0.05s;"></div>
       </div>
       <div class="crash-multiplier" id="crash-mult" style="color: #55ff00;">1.00x</div>
-      <div id="crash-status" style="text-align: center; margin-bottom: 15px; font-weight: bold; color: #fff;">Ожидание...</div>
-      
+      <div id="crash-status" style="text-align: center; margin-bottom: 15px; font-weight: bold;">Ожидание...</div>
       <div class="admin-form">
-        <input id="crash-bet" type="number" min="1" placeholder="Сумма ставки" value="100">
+        <input id="crash-bet" type="number" min="1" value="100">
         <div style="display: flex; gap: 10px; margin-top: 10px;">
           <button id="crash-start-btn" class="primary" onclick="startCrash()" style="flex: 1;">Старт</button>
           <button id="crash-cashout-btn" class="primary" onclick="cashoutCrash()" style="flex: 1; background: #ffaa00; color: #000;" disabled>Забрать</button>
@@ -61,22 +58,64 @@
       <div class="section-title">КЕЙСЫ</div>
       <div id="cases-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;"></div>
       <div id="case-result-text" style="display: none; margin-top: 20px; text-align: center;"></div>
+
+      <div class="section-title sub" style="margin-top: 40px; text-align: center;">УЛУЧШИТЬ СКИН</div>
+      <div id="upgrade-interface" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <div style="width: 30%; text-align: center; background: #111; border-radius: 50%; padding: 20px 0;"><img id="upgrade-img-left" src="" style="width: 80px;"></div>
+          <div style="width: 40%; text-align: center;"><button id="btn-do-upgrade" style="background: #55ff00; color: black; padding: 15px; border-radius: 8px; font-weight: bold; border: none;">УЛУЧШИТЬ</button></div>
+          <div style="width: 30%; text-align: center; background: #111; border-radius: 50%; padding: 20px 0;"><img id="upgrade-img-right" src="" style="width: 80px;"></div>
+        </div>
+        <div style="display: flex; justify-content: center; gap: 10px; margin-bottom: 20px;">
+          <button class="chance-btn" onclick="setChance(20)" style="padding: 8px 15px; background: #333; color: #fff; border: none;">x5 (20%)</button>
+          <button class="chance-btn" onclick="setChance(30)" style="padding: 8px 15px; background: #333; color: #fff; border: none;">x3 (30%)</button>
+          <button class="chance-btn" onclick="setChance(50)" style="padding: 8px 15px; background: #333; color: #fff; border: none;">x2 (50%)</button>
+        </div>
+        <div id="upgrade-result-text" style="text-align: center; margin-top: 20px;"></div>
+      </div>
+      <div id="inventory-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px;"></div>
+    </section>
+
+    <section id="rating" class="panel hidden">
+      <div class="section-title">ТОП ИГРОКОВ</div>
+      <div id="rating-list"></div>
     </section>
 
     <section id="admin" class="panel hidden">
       <div class="section-title">АДМИН-ПАНЕЛЬ</div>
       
-      <div class="section-title sub">УПРАВЛЕНИЕ БАЛЛАМИ</div>
+      <div class="section-title sub">БАЛЛЫ (ВРУЧНУЮ)</div>
       <form id="admin-points-form" class="admin-form" style="margin-bottom: 24px;">
         <input id="admin-target" type="text" placeholder="ID или @username" required>
         <div style="display: flex; gap: 8px;">
-          <select id="admin-points-action" style="flex: 1;">
-            <option value="add">Начислить</option>
-            <option value="remove">Списать</option>
-          </select>
+          <select id="admin-points-action" style="flex: 1;"><option value="add">Начислить</option><option value="remove">Списать</option></select>
           <input id="admin-points-amount" type="number" min="1" placeholder="Сумма" required style="flex: 1;">
         </div>
         <button class="primary" type="submit">Применить</button>
+      </form>
+
+      <div class="section-title sub">БАЛЛЫ (СПИСОК)</div>
+      <form id="admin-dropdown-points" class="admin-form" style="margin-bottom: 24px;">
+        <select id="drop-user-id" required><option value="" disabled selected>Выберите игрока...</option></select>
+        <div style="display: flex; gap: 8px;">
+          <select id="drop-points-action" style="flex: 1;"><option value="add">Начислить</option><option value="remove">Списать</option></select>
+          <input id="drop-points-amount" type="number" min="1" placeholder="Сумма" required style="flex: 1;">
+        </div>
+        <button class="primary" type="submit">Применить</button>
+      </form>
+
+      <div class="section-title sub">НАСТРОЙКИ ИГРОКА (ДРОП И АПГРЕЙД)</div>
+      <form id="user-settings-form" class="admin-form" style="margin-bottom: 24px;">
+        <select id="settings-user-id" required><option value="" disabled selected>Выберите игрока...</option></select>
+        <div style="margin-top: 10px;">
+          <label style="color: #ccc; font-size: 12px;">Скин, который выпадет в следующем кейсе:</label>
+          <select id="force-skin-select" style="width: 100%;"><option value="">Случайный скин</option></select>
+        </div>
+        <div style="margin-top: 10px;">
+          <label style="color: #ccc; font-size: 12px;">Шанс апгрейда для игрока (%):</label>
+          <input id="custom-chance" type="number" min="1" max="100" value="10" style="width: 100%;">
+        </div>
+        <button class="primary" type="submit" style="margin-top: 10px;">Сохранить настройки</button>
       </form>
 
       <div class="section-title sub">ДОБАВИТЬ МАТЧ</div>
