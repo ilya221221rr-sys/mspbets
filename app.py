@@ -349,15 +349,41 @@ async def inventory(request: Request):
         """, (uid,))
         return [dict(r) for r in await cur.fetchall()]
 
+@app.post("/api/inventory/sell")
+async def sell_skin(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    body = await request.json()
+    inv_id = int(body.get("inv_id", 0))
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT s.price, s.name FROM inventory i JOIN skins s ON i.skin_id = s.id 
+            WHERE i.id=? AND i.user_id=? AND i.status='owned'
+        """, (inv_id, uid))
+        item = await cur.fetchone()
+        if not item:
+            await db.rollback(); raise HTTPException(400, "Скин не найден или уже продан")
+        await db.execute("UPDATE inventory SET status='sold' WHERE id=?", (inv_id,))
+        sell_price = int(item["price"])
+        await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (sell_price, uid))
+        await db.commit()
+    return {"ok": True, "message": f"Скин {item['name']} продан за {sell_price} PTS", "balance_added": sell_price}
+
 @app.post("/api/upgrade")
 async def upgrade_skin(request: Request):
     user = await current_user(request)
     uid = await ensure_user(user)
     body = await request.json()
     inv_id = int(body.get("inv_id", 0))
+    chance = float(body.get("chance", 30))
+    
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("BEGIN IMMEDIATE")
         db.row_factory = aiosqlite.Row
+        
         cur = await db.execute("""
             SELECT s.id as skin_id, s.price, s.name, s.image_url, s.rarity
             FROM inventory i JOIN skins s ON i.skin_id = s.id 
@@ -366,23 +392,35 @@ async def upgrade_skin(request: Request):
         current_skin = await cur.fetchone()
         if not current_skin:
             await db.rollback(); raise HTTPException(400, "Скин не найден")
+            
+        ideal_price = current_skin["price"] / (chance / 100.0)
         
-        cur = await db.execute("SELECT id, name, image_url, price, rarity FROM skins WHERE price > ? ORDER BY RANDOM() LIMIT 1", (current_skin["price"],))
+        cur = await db.execute("""
+            SELECT id, name, image_url, price, rarity 
+            FROM skins 
+            WHERE price >= ? AND price <= ? 
+            ORDER BY ABS(price - ?) ASC LIMIT 1
+        """, (ideal_price * 0.8, ideal_price * 1.2, ideal_price))
         target_skin = await cur.fetchone()
-        if not target_skin:
-            await db.rollback(); raise HTTPException(400, "Нет скинов дороже для апгрейда")
         
-        success = random.randint(1, 100) <= 30
+        if not target_skin:
+            cur = await db.execute("SELECT id, name, image_url, price, rarity FROM skins ORDER BY price DESC LIMIT 1")
+            target_skin = await cur.fetchone()
+            
+        if not target_skin:
+            await db.rollback(); raise HTTPException(400, "Нет скинов для апгрейда")
+            
+        success = random.uniform(0, 100) <= chance
         
         if success:
             await db.execute("UPDATE inventory SET status='upgraded' WHERE id=?", (inv_id,))
             await db.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", (uid, target_skin["id"], datetime.now(timezone.utc).isoformat()))
             await db.commit()
-            return {"ok": True, "success": True, "old_skin": dict(current_skin), "target_skin": dict(target_skin)}
+            return {"ok": True, "success": True, "old_skin": dict(current_skin), "target_skin": dict(target_skin), "chance": chance}
         else:
             await db.execute("UPDATE inventory SET status='lost' WHERE id=?", (inv_id,))
             await db.commit()
-            return {"ok": True, "success": False, "old_skin": dict(current_skin), "target_skin": dict(target_skin)}
+            return {"ok": True, "success": False, "old_skin": dict(current_skin), "target_skin": dict(target_skin), "chance": chance}
 
 # --- АДМИНКА ---
 @app.post("/api/admin/events")
