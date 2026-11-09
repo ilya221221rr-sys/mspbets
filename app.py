@@ -65,6 +65,7 @@ async def init_db():
             result TEXT, odds_1 REAL NOT NULL DEFAULT 2.0, odds_x REAL, odds_2 REAL NOT NULL DEFAULT 2.0,
             created_at TEXT NOT NULL
         )""")
+        # Убрали UNIQUE(user_id, event_id), добавили locked_odds
         await db.execute("""CREATE TABLE IF NOT EXISTS predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             event_id INTEGER NOT NULL, choice TEXT NOT NULL, points INTEGER NOT NULL,
@@ -270,7 +271,6 @@ async def open_case(request: Request):
         row = await cur.fetchone()
         if not row or row["balance"] < case["price"]: raise HTTPException(400, "Мало баллов")
         
-        # ПРОВЕРКА ПРИНУДИТЕЛЬНОГО ДРОПА
         cur = await db.execute("SELECT forced_skin_id FROM user_settings WHERE user_id=?", (uid,))
         forced = await cur.fetchone()
         
@@ -458,6 +458,23 @@ async def create_promo(request: Request):
         except aiosqlite.IntegrityError:
             raise HTTPException(400, "Такой промокод уже есть")
     return {"ok": True, "message": "Промокод создан!"}
+
+@app.post("/api/promo/activate")
+async def activate_promo(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    code = str((await request.json()).get("code", "")).strip().upper()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute("SELECT reward FROM promo_codes WHERE code=?", (code,))
+        promo = await cur.fetchone()
+        if not promo: raise HTTPException(404, "Нет такого кода")
+        cur = await db.execute("SELECT 1 FROM promo_uses WHERE user_id=? AND code=?", (uid, code))
+        if await cur.fetchone(): raise HTTPException(400, "Уже активирован")
+        await db.execute("INSERT INTO promo_uses (user_id, code) VALUES (?,?)", (uid, code))
+        await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (promo[0], uid))
+        await db.commit()
+    return {"ok": True, "message": f"+{promo[0]} баллов!"}
 
 @app.get("/health")
 async def health(): return {"status": "ok"}
