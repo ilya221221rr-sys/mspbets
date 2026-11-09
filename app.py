@@ -100,12 +100,16 @@ async def init_db():
             ]
             for c in cases_data: await db.execute("INSERT INTO cases (id, name, price, image_url) VALUES (?, ?, ?, ?)", c)
             
+            # ВОЗВРАЩАЕМ Barding of Balaur, Solar Gyre и Аркану на венгу
             skins_data = [
                 (1, "Demon Eater", "Rare", 2000, "https://i.imgur.com/BegS1KI.png"),
                 (1, "Fiery Soul", "Rare", 1600, "https://i.imgur.com/AQiM6I8.png"),
                 (1, "Kindred", "Common", 160, "https://i.imgur.com/G7XpkYs.png"),
+                (1, "Barding of Balaur", "Common", 180, "https://i.imgur.com/0QWoP2i.png"), # ВОЗВРАЩЕН
+                (1, "Solar Gyre", "Common", 266, "https://i.imgur.com/7x8YDiz.png"),      # ВОЗВРАЩЕН
                 (2, "Demon Eater", "Rare", 2000, "https://i.imgur.com/BegS1KI.png"),
                 (2, "Аркана на врку", "Immortal", 14000, "https://i.imgur.com/rQAXrZd.png"),
+                (2, "Аркана на венгу", "Rare", 1700, "https://i.imgur.com/d7TJSbb.png"),  # ВОЗВРАЩЕНА
                 (3, "Аркана на тб", "Rare", 2500, "https://i.imgur.com/T9M1BIX.png"),
                 (4, "Аркана на врку", "Immortal", 14000, "https://i.imgur.com/rQAXrZd.png"),
                 (5, "Аркана на пуджа", "Common", 1600, "https://placehold.co/100x100?text=Pudge")
@@ -397,8 +401,7 @@ async def admin_update_odds(event_id: int, request: Request):
     if await ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     body = await request.json()
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("UPDATE events SET odds_1=?, odds_x=?, odds_2=? WHERE id=?", 
-                         (body["o1"], body.get("ox"), body["o2"], event_id))
+        await db.execute("UPDATE events SET odds_1=?, odds_x=?, odds_2=? WHERE id=?", (body["o1"], body.get("ox"), body["o2"], event_id))
         await db.commit()
     return {"ok": True, "message": "Коэффициенты обновлены!"}
 
