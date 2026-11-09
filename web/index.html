@@ -36,10 +36,9 @@
       <div id="event-list"><div class="empty">Загружаем матчи...</div></div>
     </section>
 
-    <!-- КЕЙСЫ И АПГРЕЙДЕР -->
     <section id="cases" class="panel hidden">
       <div class="section-title">КЕЙСЫ DOTA 2</div>
-      <div id="cases-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;"></div>
+      <div id="cases-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;"></div>
       
       <div id="case-result" style="margin-top: 20px; text-align: center; overflow: hidden; width: 100%; position: relative; min-height: 100px;">
         <div id="case-strip" style="display: none; display: flex; gap: 10px; transition: transform 4s cubic-bezier(0.1, 0.7, 0.1, 1); transform: translateX(0);"></div>
@@ -47,14 +46,33 @@
         <div id="case-result-text" style="display: none; margin-top: 20px;"></div>
       </div>
 
-      <div class="section-title sub" style="margin-top: 40px;">АПГРЕЙДЕР</div>
-      <div id="inventory-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;"></div>
+      <div class="section-title sub" style="margin-top: 40px; text-align: center;">УЛУЧШИТЬ СВОЙ СКИН</div>
+      
+      <div id="upgrade-interface" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <div id="slot-left" style="width: 30%; text-align: center; background: #111; border: 2px solid #333; border-radius: 50%; padding: 20px 0;">
+            <img id="upgrade-img-left" src="" style="width: 80px; height: 80px; object-fit: contain;">
+          </div>
+          
+          <div style="width: 40%; text-align: center;">
+            <button id="btn-do-upgrade" style="background: #55ff00; color: black; border: none; padding: 15px 30px; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer;">УЛУЧШИТЬ</button>
+          </div>
 
-      <div id="upgrade-result" style="margin-top: 20px; text-align: center; overflow: hidden; width: 100%; position: relative; min-height: 100px; display: none;">
-        <div id="upgrade-strip" style="display: flex; gap: 10px; transition: transform 4s cubic-bezier(0.1, 0.7, 0.1, 1); transform: translateX(0);"></div>
-        <div id="upgrade-pointer" style="position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 4px; height: 100%; background: #55ff00; box-shadow: 0 0 10px #55ff00; z-index: 10;"></div>
-        <div id="upgrade-text" style="display: none; margin-top: 20px;"></div>
+          <div id="slot-right" style="width: 30%; text-align: center; background: #111; border: 2px solid #333; border-radius: 50%; padding: 20px 0;">
+            <img id="upgrade-img-right" src="" style="width: 80px; height: 80px; object-fit: contain;">
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: center; gap: 10px; margin-bottom: 20px;">
+          <button class="chance-btn" onclick="setChance(20)">x5 (20%)</button>
+          <button class="chance-btn" onclick="setChance(30)">x3 (30%)</button>
+          <button class="chance-btn" onclick="setChance(50)">x2 (50%)</button>
+        </div>
+        
+        <div id="upgrade-result-text" style="text-align: center; margin-top: 20px;"></div>
       </div>
+
+      <div id="inventory-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px;"></div>
     </section>
 
     <section id="rating" class="panel hidden">
