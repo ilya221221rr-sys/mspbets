@@ -196,8 +196,41 @@ $("give-points")?.addEventListener("submit", async e => {
     });
     $("give-points").reset();
     toast(data.message || "Баллы начислены");
-    await loadAdminUsers(); // Обновляем список, чтобы увидеть новый баланс
+    await loadAdminUsers();
   } catch (err) {
+    toast(err.message);
+  }
+});
+// ОБРАБОТЧИК СОЗДАНИЯ ПРОМОКОДА
+$("create-promo")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const data = await api("/api/admin/create-promo", {
+      method: "POST",
+      body: JSON.stringify({
+        code: $("promo-code").value,
+        reward: Number($("promo-reward").value)
+      })
+    });
+    $("create-promo").reset();
+    toast(data.message || "Промокод создан");
+  } catch (err) {
+    toast(err.message);
+  }
+});
+// ОБРАБОТЧИК АКТИВАЦИИ ПРОМОКОДА ИГРОКОМ
+$("btn-promo").addEventListener("click", async () => {
+  const code = prompt("Введите ваш промокод (без учета регистра):");
+  if (!code) return;
+  
+  try {
+    const data = await api("/api/promo", {
+      method: "POST",
+      body: JSON.stringify({ code: code })
+    });
+    toast(data.message || "Промокод активирован!");
+    await loadMe();
+  } catch(err) {
     toast(err.message);
   }
 });
