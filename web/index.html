@@ -17,8 +17,10 @@
   <div class="glow"></div>
   <header>
     <div class="brand">MSP<span>BETS</span></div>
+    <!-- КНОПКА КАНАЛА И ПРОМОКОДА -->
     <div style="display: flex; gap: 8px; align-items: center;">
-      <button id="btn-promo" style="background: #1a1a1a; color: #55ff00; border: 1px solid #55ff00; padding: 6px 10px; border-radius: 6px; font-size: 12px;">🎁 Промо</button>
+      <a href="https://t.me/mspbetsprizi" target="_blank" style="text-decoration: none; background: #1a1a1a; color: #55ff00; border: 1px solid #55ff00; padding: 6px 10px; border-radius: 6px; font-size: 12px; display: flex; align-items: center; gap: 4px;">📢 Канал</a>
+      <button id="btn-promo" style="background: #1a1a1a; color: #55ff00; border: 1px solid #55ff00; padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;">🎁 Промо</button>
       <div class="balance"><small>БАЛАНС</small><b id="balance">—</b> <span>PTS</span></div>
     </div>
   </header>
@@ -59,8 +61,14 @@
 
     <section id="cases" class="panel hidden">
       <div class="section-title">КЕЙСЫ</div>
-      <div id="cases-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;"></div>
-      <div id="case-result-text" style="display: none; margin-top: 20px; text-align: center;"></div>
+      <div id="cases-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;"></div>
+      
+      <!-- ВЕРНУЛИ АНИМАЦИЮ ПРОКРУТКИ КЕЙСОВ -->
+      <div id="case-result" style="margin-top: 20px; text-align: center; overflow: hidden; width: 100%; position: relative; min-height: 100px;">
+        <div id="case-strip" style="display: none; display: flex; gap: 10px; transition: transform 4s cubic-bezier(0.1, 0.7, 0.1, 1); transform: translateX(0);"></div>
+        <div id="case-pointer" style="display: none; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 4px; height: 100%; background: #55ff00; box-shadow: 0 0 10px #55ff00; z-index: 10;"></div>
+        <div id="case-result-text" style="display: none; margin-top: 20px;"></div>
+      </div>
 
       <div class="section-title sub" style="margin-top: 40px; text-align: center;">УЛУЧШИТЬ СКИН</div>
       <div id="upgrade-interface" style="display: none;">
