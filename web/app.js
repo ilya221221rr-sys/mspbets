@@ -15,7 +15,6 @@ function toast(m) {
   setTimeout(()=> t.classList.add("hidden"), 2500);
 }
 
-// --- ОСНОВНОЕ ---
 async function loadMe() {
   me = await api("/api/me");
   $("balance").textContent = me.balance.toLocaleString("ru-RU");
@@ -51,14 +50,12 @@ window.placeBet = async function(eventId, choice, odds) {
   } catch(e) { toast(e.message); }
 }
 
-// --- ИСТОРИЯ ---
 async function loadHistory() {
   const hist = await api("/api/history");
   $("history-list").innerHTML = hist.length ? hist.map(h => {
     let statusText = "В ожидании"; let statusColor = "#ccc";
     if (h.status === "won") { statusText = `Выиграл: +${Math.floor(h.points * h.locked_odds)} PTS`; statusColor = "#55ff00"; }
     if (h.status === "lost") { statusText = "Проиграл"; statusColor = "#f87171"; }
-    
     return `
     <div class="history-card" style="border-left: 4px solid ${statusColor};">
       <div class="history-title">${h.title} (${h.sport})</div>
@@ -69,27 +66,17 @@ async function loadHistory() {
 }
 
 // --- КРАШ ---
-let crashInterval = null;
-let currentCrashPoint = 0;
-let currentCrashMultiplier = 1.00;
-let isCrashed = false;
+let crashInterval = null, currentCrashPoint = 0, currentCrashMultiplier = 1.00, isCrashed = false;
 
 window.startCrash = function() {
   const bet = Number($("crash-bet").value);
   if (bet < 1) return toast("Введите сумму");
+  if (crashInterval) return;
   
-  if (crashInterval) return; // Уже крутится
+  $("crash-start-btn").disabled = true; $("crash-cashout-btn").disabled = false;
+  $("crash-status").textContent = "ИГРА ИДЕТ..."; $("crash-status").style.color = "#55ff00";
+  $("crash-line").style.height = "0%"; currentCrashMultiplier = 1.00; isCrashed = false;
   
-  $("crash-start-btn").disabled = true;
-  $("crash-cashout-btn").disabled = false;
-  $("crash-status").textContent = "ИГРА ИДЕТ...";
-  $("crash-status").style.color = "#55ff00";
-  $("crash-line").style.height = "0%";
-  currentCrashMultiplier = 1.00;
-  isCrashed = false;
-  
-  // Имитация: генерируем краш-поинт локально для анимации, 
-  // а на сервер отправляем результат ТОЛЬКО при кэшауте
   const rand = Math.random();
   if (rand < 0.5) currentCrashPoint = 1 + Math.random() * 0.5;
   else currentCrashPoint = 1.5 + Math.random() * 10;
@@ -97,64 +84,37 @@ window.startCrash = function() {
   crashInterval = setInterval(() => {
     if (isCrashed) return;
     currentCrashMultiplier += 0.05;
-    
-    // Обновляем график (высоту линии)
     const heightPerc = Math.min((currentCrashMultiplier / currentCrashPoint) * 100, 100);
     $("crash-line").style.height = `${heightPerc}%`;
     $("crash-mult").textContent = currentCrashMultiplier.toFixed(2) + "x";
-    
-    // Если достигли краш-поинта
-    if (currentCrashMultiplier >= currentCrashPoint) {
-      crashEnd();
-    }
+    if (currentCrashMultiplier >= currentCrashPoint) crashEnd();
   }, 100);
 }
 
 window.cashoutCrash = async function() {
   if (isCrashed || currentCrashMultiplier <= 1.00) return;
-  isCrashed = true;
-  clearInterval(crashInterval);
-  crashInterval = null;
-  
+  isCrashed = true; clearInterval(crashInterval); crashInterval = null;
   const bet = Number($("crash-bet").value);
-  
   try {
     const res = await api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: currentCrashMultiplier }) });
     toast(`Вы забрали на ${currentCrashMultiplier.toFixed(2)}x! Выигрыш: ${res.win_amount} PTS`);
-    $("crash-status").textContent = `Забрано на ${currentCrashMultiplier.toFixed(2)}x`;
-    $("crash-status").style.color = "#55ff00";
+    $("crash-status").textContent = `Забрано на ${currentCrashMultiplier.toFixed(2)}x`; $("crash-status").style.color = "#55ff00";
   } catch(e) { toast(e.message); }
-  
-  resetCrashButtons();
-  await loadMe();
+  resetCrashButtons(); await loadMe();
 }
 
 function crashEnd() {
-  isCrashed = true;
-  clearInterval(crashInterval);
-  crashInterval = null;
-  
+  isCrashed = true; clearInterval(crashInterval); crashInterval = null;
   $("crash-mult").textContent = currentCrashPoint.toFixed(2) + "x";
-  $("crash-status").textContent = `КРАШ! Игра упала на ${currentCrashPoint.toFixed(2)}x`;
-  $("crash-status").style.color = "#f87171";
+  $("crash-status").textContent = `КРАШ! Игра упала на ${currentCrashPoint.toFixed(2)}x`; $("crash-status").style.color = "#f87171";
   $("crash-line").style.background = "#f87171";
-  
-  // Отправляем на сервер результат, но с cashout = 0 (значит проиграл)
   const bet = Number($("crash-bet").value);
   api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: 0 }) }).catch(()=>{});
-  
-  setTimeout(() => {
-    $("crash-line").style.background = "linear-gradient(to right, rgba(85,255,0,0.2), #55ff00)";
-  }, 2000);
-  
-  resetCrashButtons();
-  loadMe();
+  setTimeout(() => { $("crash-line").style.background = "linear-gradient(to right, rgba(85,255,0,0.2), #55ff00)"; }, 2000);
+  resetCrashButtons(); loadMe();
 }
 
-function resetCrashButtons() {
-  $("crash-start-btn").disabled = false;
-  $("crash-cashout-btn").disabled = true;
-}
+function resetCrashButtons() { $("crash-start-btn").disabled = false; $("crash-cashout-btn").disabled = true; }
 
 // --- АДМИНКА ---
 $("admin-points-form")?.addEventListener("submit", async e => {
@@ -162,14 +122,24 @@ $("admin-points-form")?.addEventListener("submit", async e => {
   try {
     const res = await api("/api/admin/give-points", {
       method: "POST",
+      body: JSON.stringify({ target: $("admin-target").value, amount: Number($("admin-points-amount").value), action: $("admin-points-action").value })
+    });
+    toast(res.message); $("admin-points-form").reset();
+  } catch(e) { toast(e.message); }
+});
+
+$("admin-event-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    await api("/api/admin/create-event", {
+      method: "POST",
       body: JSON.stringify({
-        target: $("admin-target").value,
-        amount: Number($("admin-points-amount").value),
-        action: $("admin-points-action").value
+        sport: $("admin-sport").value, title: $("admin-title").value,
+        o1: Number($("admin-o1").value), ox: $("admin-ox").value ? Number($("admin-ox").value) : null,
+        o2: Number($("admin-o2").value)
       })
     });
-    toast(res.message);
-    $("admin-points-form").reset();
+    toast("Матч добавлен!"); $("admin-event-form").reset(); await loadEvents(); loadSettle();
   } catch(e) { toast(e.message); }
 });
 
@@ -189,23 +159,9 @@ async function loadSettle() {
 
 window.settle = async function(id, result) {
   if (!confirm("Рассчитать матч?")) return;
-  try {
-    await api(`/api/admin/settle/${id}`, { method: "POST", body: JSON.stringify({ result }) });
-    toast("Рассчитано!");
-    await loadEvents();
-    loadSettle();
-  } catch(e) { toast(e.message); }
+  try { await api(`/api/admin/settle/${id}`, { method: "POST", body: JSON.stringify({ result }) }); toast("Рассчитано!"); await loadEvents(); loadSettle(); } 
+  catch(e) { toast(e.message); }
 }
-
-// --- ВКЛАДКИ ---
-document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click", async ()=>{
-  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===btn));
-  document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("hidden",p.id!==btn.dataset.tab));
-  
-  if(btn.dataset.tab==="history") await loadHistory();
-  if(btn.dataset.tab==="admin") { await loadEvents(); loadSettle(); }
-  if(btn.dataset.tab==="cases") await loadCases();
-}));
 
 async function loadCases() {
   const cases = await api("/api/cases");
@@ -228,10 +184,15 @@ window.openCase = async function(id) {
   } catch(e) { toast(e.message); }
 }
 
-// --- СТАРТ ---
+document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click", async ()=>{
+  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===btn));
+  document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("hidden",p.id!==btn.dataset.tab));
+  if(btn.dataset.tab==="history") await loadHistory();
+  if(btn.dataset.tab==="admin") { await loadEvents(); loadSettle(); }
+  if(btn.dataset.tab==="cases") await loadCases();
+}));
+
 (async()=>{
-  try {
-    await loadMe();
-    await loadEvents();
-  } catch(e) { $("event-list").innerHTML = `<div class="empty">${e.message}</div>`; }
+  try { await loadMe(); await loadEvents(); } 
+  catch(e) { $("event-list").innerHTML = `<div class="empty">${e.message}</div>`; }
 })();
