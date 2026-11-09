@@ -70,23 +70,22 @@ async def init_db():
             event_id INTEGER NOT NULL, choice TEXT NOT NULL, points INTEGER NOT NULL,
             locked_odds REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
         )""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS promo_codes (code TEXT PRIMARY KEY, reward INTEGER NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS promo_uses (user_id INTEGER NOT NULL, code TEXT NOT NULL, PRIMARY KEY (user_id, code))""")
         await db.execute("""CREATE TABLE IF NOT EXISTS cases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
-            price INTEGER NOT NULL, image_url TEXT NOT NULL
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, price INTEGER NOT NULL, image_url TEXT NOT NULL
         )""")
         await db.execute("""CREATE TABLE IF NOT EXISTS skins (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER,
-            name TEXT NOT NULL, rarity TEXT NOT NULL,
-            image_url TEXT NOT NULL, price INTEGER NOT NULL
+            id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER, name TEXT NOT NULL, rarity TEXT NOT NULL, image_url TEXT NOT NULL, price INTEGER NOT NULL
         )""")
         await db.execute("""CREATE TABLE IF NOT EXISTS inventory (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
-            skin_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'owned',
-            created_at TEXT NOT NULL
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, skin_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'owned', created_at TEXT NOT NULL
+        )""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS user_settings (
+            user_id INTEGER PRIMARY KEY, forced_skin_id INTEGER, custom_upgrade_chance INTEGER DEFAULT 10
         )""")
         await db.execute("""CREATE TABLE IF NOT EXISTS crash_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
-            bet_amount INTEGER NOT NULL, multiplier REAL NOT NULL, win_amount INTEGER NOT NULL, created_at TEXT NOT NULL
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, bet_amount INTEGER NOT NULL, multiplier REAL NOT NULL, win_amount INTEGER NOT NULL, created_at TEXT NOT NULL
         )""")
         await db.commit()
         
@@ -162,6 +161,14 @@ async def me(request: Request):
     row["is_admin"] = uid in ADMIN_IDS
     return row
 
+@app.get("/api/rating")
+async def get_rating(request: Request):
+    await current_user(request)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT first_name, username, balance FROM users ORDER BY balance DESC LIMIT 50")
+        return [dict(r) for r in await cur.fetchall()]
+
 @app.get("/api/events")
 async def events(request: Request):
     user = await current_user(request)
@@ -183,18 +190,17 @@ async def predict(request: Request):
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
         row = await cur.fetchone()
-        cur = await db.execute("SELECT sport, status, odds_1, odds_x, odds_2 FROM events WHERE id=?", (event_id,))
+        cur = await db.execute("SELECT status, odds_1, odds_x, odds_2 FROM events WHERE id=?", (event_id,))
         event = await cur.fetchone()
         
         if not event or event["status"] != "open": raise HTTPException(400, "Закрыто")
-        
         odds_map = {"1": event["odds_1"], "X": event["odds_x"], "2": event["odds_2"]}
         locked_odds = odds_map.get(choice)
         if not locked_odds: raise HTTPException(400, "Неверный исход")
         if row["balance"] < points: raise HTTPException(400, "Мало баллов")
         
-        await db.execute("""INSERT INTO predictions (user_id, event_id, choice, points, locked_odds, created_at) 
-                            VALUES (?, ?, ?, ?, ?, ?)""", (uid, event_id, choice, points, locked_odds, datetime.now(timezone.utc).isoformat()))
+        await db.execute("INSERT INTO predictions (user_id, event_id, choice, points, locked_odds, created_at) VALUES (?, ?, ?, ?, ?, ?)", 
+                         (uid, event_id, choice, points, locked_odds, datetime.now(timezone.utc).isoformat()))
         await db.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (points, uid))
         await db.commit()
     return {"ok": True}
@@ -217,14 +223,11 @@ async def play_crash(request: Request):
     user = await current_user(request)
     uid = await ensure_user(user)
     body = await request.json()
-    bet = int(body.get("amount", 0))
-    cashout = float(body.get("cashout", 0)) 
-    
+    bet = int(body.get("amount", 0)); cashout = float(body.get("cashout", 0)) 
     if bet < 1: raise HTTPException(400, "Мин. ставка 1")
     
     rand = random.random()
-    if rand < 0.5: crash_point = round(random.uniform(1.0, 1.5), 2)
-    else: crash_point = round(random.uniform(1.5, 15.0), 2)
+    crash_point = round(random.uniform(1.0, 1.5), 2) if rand < 0.5 else round(random.uniform(1.5, 15.0), 2)
     
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("BEGIN IMMEDIATE")
@@ -233,7 +236,6 @@ async def play_crash(request: Request):
         if not row or row[0] < bet: raise HTTPException(400, "Мало баллов")
         
         await db.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (bet, uid))
-        
         win_amount = 0
         if cashout > 0 and cashout <= crash_point:
             win_amount = int(bet * cashout)
@@ -242,7 +244,6 @@ async def play_crash(request: Request):
         await db.execute("INSERT INTO crash_history (user_id, bet_amount, multiplier, win_amount, created_at) VALUES (?,?,?,?,?)", 
                          (uid, bet, crash_point, win_amount, datetime.now(timezone.utc).isoformat()))
         await db.commit()
-        
     return {"ok": True, "crash_point": crash_point, "win": win_amount > 0, "win_amount": win_amount}
 
 @app.get("/api/cases")
@@ -269,20 +270,93 @@ async def open_case(request: Request):
         row = await cur.fetchone()
         if not row or row["balance"] < case["price"]: raise HTTPException(400, "Мало баллов")
         
-        roll = random.randint(1, 100)
-        rarity = "Common" if roll <= 60 else "Rare" if roll <= 85 else "Immortal"
+        # ПРОВЕРКА ПРИНУДИТЕЛЬНОГО ДРОПА
+        cur = await db.execute("SELECT forced_skin_id FROM user_settings WHERE user_id=?", (uid,))
+        forced = await cur.fetchone()
         
-        cur = await db.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=? AND rarity=?", (case_id, rarity))
-        skins = await cur.fetchall()
-        if not skins:
-            cur = await db.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=?", (case_id,))
+        if forced and forced["forced_skin_id"]:
+            cur = await db.execute("SELECT id, name, image_url, price FROM skins WHERE id=?", (forced["forced_skin_id"],))
+            skin = await cur.fetchone()
+            await db.execute("UPDATE user_settings SET forced_skin_id=NULL WHERE user_id=?", (uid,))
+        else:
+            roll = random.randint(1, 100)
+            rarity = "Common" if roll <= 60 else "Rare" if roll <= 85 else "Immortal"
+            cur = await db.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=? AND rarity=?", (case_id, rarity))
             skins = await cur.fetchall()
-        skin = random.choice(skins)
+            if not skins:
+                cur = await db.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=?", (case_id,))
+                skins = await cur.fetchall()
+            skin = random.choice(skins)
         
         await db.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (case["price"], uid))
         await db.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", (uid, skin["id"], datetime.now(timezone.utc).isoformat()))
         await db.commit()
     return {"ok": True, "skin": dict(skin)}
+
+@app.get("/api/inventory")
+async def inventory(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT i.id as inv_id, s.name, s.image_url, s.price, s.rarity
+            FROM inventory i JOIN skins s ON i.skin_id = s.id 
+            WHERE i.user_id=? AND i.status='owned' ORDER BY s.price DESC
+        """, (uid,))
+        return [dict(r) for r in await cur.fetchall()]
+
+@app.post("/api/inventory/sell")
+async def sell_skin(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    inv_id = int((await request.json()).get("inv_id", 0))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT s.price, s.name FROM inventory i JOIN skins s ON i.skin_id = s.id WHERE i.id=? AND i.user_id=? AND i.status='owned'", (inv_id, uid))
+        item = await cur.fetchone()
+        if not item: raise HTTPException(400, "Скин не найден")
+        await db.execute("UPDATE inventory SET status='sold' WHERE id=?", (inv_id,))
+        await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (int(item["price"]), uid))
+        await db.commit()
+    return {"ok": True, "message": f"Скин продан за {int(item['price'])} PTS"}
+
+@app.post("/api/upgrade")
+async def upgrade_skin(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    body = await request.json()
+    inv_id = int(body.get("inv_id", 0)); chosen_chance = float(body.get("chance", 20)) 
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT custom_upgrade_chance FROM user_settings WHERE user_id=?", (uid,))
+        settings = await cur.fetchone()
+        real_chance = settings["custom_upgrade_chance"] if settings and settings["custom_upgrade_chance"] else 10.0
+        
+        cur = await db.execute("SELECT s.id as skin_id, s.price, s.name, s.image_url, s.rarity FROM inventory i JOIN skins s ON i.skin_id = s.id WHERE i.id=? AND i.user_id=? AND i.status='owned'", (inv_id, uid))
+        current_skin = await cur.fetchone()
+        if not current_skin: raise HTTPException(400, "Скин не найден")
+            
+        ideal_price = current_skin["price"] / (chosen_chance / 100.0)
+        cur = await db.execute("SELECT id, name, image_url, price, rarity FROM skins WHERE price > ? ORDER BY ABS(price - ?) ASC LIMIT 1", (current_skin["price"], ideal_price))
+        target_skin = await cur.fetchone()
+        if not target_skin:
+            cur = await db.execute("SELECT id, name, image_url, price, rarity FROM skins ORDER BY price DESC LIMIT 1")
+            target_skin = await cur.fetchone()
+            
+        success = random.uniform(0, 100) <= real_chance
+        if success:
+            await db.execute("UPDATE inventory SET status='upgraded' WHERE id=?", (inv_id,))
+            await db.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", (uid, target_skin["id"], datetime.now(timezone.utc).isoformat()))
+            await db.commit()
+            return {"ok": True, "success": True, "old_skin": dict(current_skin), "target_skin": dict(target_skin)}
+        else:
+            await db.execute("UPDATE inventory SET status='lost' WHERE id=?", (inv_id,))
+            await db.commit()
+            return {"ok": True, "success": False, "old_skin": dict(current_skin), "target_skin": dict(target_skin)}
 
 # --- АДМИНКА ---
 @app.post("/api/admin/give-points")
@@ -291,15 +365,12 @@ async def give_points(request: Request):
     if await ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     body = await request.json()
     target = str(body.get("target", "")).strip()
-    amount = int(body.get("amount", 0))
-    action = str(body.get("action", "add"))
+    amount = int(body.get("amount", 0)); action = str(body.get("action", "add"))
     
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        if target.startswith("@"):
-            cur = await db.execute("SELECT user_id FROM users WHERE username=?", (target[1:],))
-        else:
-            cur = await db.execute("SELECT user_id FROM users WHERE user_id=?", (int(target),))
+        if target.startswith("@"): cur = await db.execute("SELECT user_id FROM users WHERE username=?", (target[1:],))
+        else: cur = await db.execute("SELECT user_id FROM users WHERE user_id=?", (int(target),))
         u_row = await cur.fetchone()
         if not u_row: raise HTTPException(404, "Игрок не найден")
         
@@ -307,6 +378,42 @@ async def give_points(request: Request):
         await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (final_amount, u_row["user_id"]))
         await db.commit()
     return {"ok": True, "message": f"Успешно! {action} {amount} баллов"}
+
+@app.post("/api/admin/user-settings")
+async def admin_user_settings(request: Request):
+    user = await current_user(request)
+    if await ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    body = await request.json()
+    target_id = int(body.get("user_id", 0))
+    forced_skin_id = body.get("forced_skin_id")
+    custom_chance = int(body.get("custom_chance", 10))
+    
+    if forced_skin_id == "": forced_skin_id = None
+    if forced_skin_id: forced_skin_id = int(forced_skin_id)
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO user_settings (user_id, custom_upgrade_chance) VALUES (?, 10)", (target_id,))
+        await db.execute("UPDATE user_settings SET forced_skin_id=?, custom_upgrade_chance=? WHERE user_id=?", (forced_skin_id, custom_chance, target_id))
+        await db.commit()
+    return {"ok": True, "message": "Настройки обновлены!"}
+
+@app.get("/api/admin/users")
+async def admin_users(request: Request):
+    user = await current_user(request)
+    if await ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT user_id, first_name, username, balance FROM users ORDER BY created_at DESC LIMIT 100")
+        return [dict(r) for r in await cur.fetchall()]
+
+@app.get("/api/admin/all-skins")
+async def admin_all_skins(request: Request):
+    user = await current_user(request)
+    if await ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT id, name, price FROM skins ORDER BY price DESC")
+        return [dict(r) for r in await cur.fetchall()]
 
 @app.post("/api/admin/create-event")
 async def admin_create_event(request: Request):
@@ -324,7 +431,6 @@ async def settle_event(event_id: int, request: Request):
     user = await current_user(request)
     if await ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     result = str((await request.json()).get("result", ""))
-    
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("BEGIN IMMEDIATE")
         db.row_factory = aiosqlite.Row
@@ -339,3 +445,19 @@ async def settle_event(event_id: int, request: Request):
                 await db.execute("UPDATE predictions SET status='lost' WHERE user_id=? AND event_id=?", (p["user_id"], event_id))
         await db.commit()
     return {"ok": True}
+
+@app.post("/api/admin/create-promo")
+async def create_promo(request: Request):
+    user = await current_user(request)
+    if await ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    body = await request.json()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            await db.execute("INSERT INTO promo_codes (code, reward) VALUES (?, ?)", (body["code"].upper(), int(body["reward"])))
+            await db.commit()
+        except aiosqlite.IntegrityError:
+            raise HTTPException(400, "Такой промокод уже есть")
+    return {"ok": True, "message": "Промокод создан!"}
+
+@app.get("/health")
+async def health(): return {"status": "ok"}
