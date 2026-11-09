@@ -219,6 +219,8 @@ async def leaderboard(request: Request):
         cur = await db.execute("SELECT first_name, username, balance FROM users ORDER BY balance DESC LIMIT 50")
         return [dict(r) for r in await cur.fetchall()]
 
+# --- АДМИНСКИЕ ЭНДПОИНТЫ ---
+
 @app.post("/api/admin/events")
 async def create_event(request: Request):
     user = await current_user(request)
@@ -276,6 +278,21 @@ async def update_odds(event_id: int, request: Request):
         await db.commit()
     return {"ok": True, "message": "Коэффициенты обновлены"}
 
+@app.get("/api/admin/users")
+async def admin_users(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    if uid not in ADMIN_IDS:
+        raise HTTPException(403, "Нет доступа")
+        
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT user_id, first_name, username, balance 
+            FROM users ORDER BY created_at DESC LIMIT 100
+        """)
+        return [dict(r) for r in await cur.fetchall()]
+
 @app.post("/api/admin/give-points")
 async def give_points(request: Request):
     user = await current_user(request)
@@ -295,10 +312,10 @@ async def give_points(request: Request):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cur = await db.execute("SELECT user_id FROM users WHERE user_id=?", (target_id,))
         if not await cur.fetchone():
-            raise HTTPException(404, "Пользователь не найден (он должен сначала зайти в Mini App)")
+            raise HTTPException(404, "Пользователь не найден")
         await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (amount, target_id))
         await db.commit()
-    return {"ok": True, "message": f"Начислено {amount} баллов ID {target_id}"}
+    return {"ok": True, "message": f"Начислено {amount} баллов"}
 
 @app.post("/api/admin/events/{event_id}/settle")
 async def settle_event(event_id: int, request: Request):
