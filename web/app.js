@@ -313,12 +313,38 @@ $("btn-promo")?.addEventListener("click", async () => {
 async function loadSettle() {
   const open = events.filter(e=>e.status==="open");
   $("settle-list").innerHTML = open.map(e=>`
-    <div class="settle" style="margin-bottom: 10px; background: #1a1a1a; padding: 10px; border-radius: 6px;">
-      <div style="font-size: 14px; margin-bottom: 5px;">${e.title}</div>
-      <div style="display: flex; gap: 5px;"><button onclick="settle(${e.id}, '1')">П1</button><button onclick="settle(${e.id}, 'X')">X</button><button onclick="settle(${e.id}, '2')">П2</button></div>
+    <div class="settle" style="margin-bottom: 10px; background: #1a1a1a; padding: 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 5px;">
+      <div style="font-size: 14px;">${e.title}</div>
+      <div style="font-size: 12px; color: #aaa;">Текущие Кф: ${e.odds_1} / ${e.odds_x || '-'} / ${e.odds_2}</div>
+      <div style="display: flex; gap: 5px;">
+        <button onclick="updateOdds(${e.id}, ${e.odds_1}, ${e.odds_x || 'null'}, ${e.odds_2})" style="background: #ffaa00; color: #000; border: none; padding: 4px 8px; border-radius: 4px;">✏️ Изменить Кф</button>
+      </div>
+      <div style="display: flex; gap: 5px; margin-top: 5px;">
+        <button onclick="settle(${e.id}, '1')">П1</button>
+        <button onclick="settle(${e.id}, 'X')">X</button>
+        <button onclick="settle(${e.id}, '2')">П2</button>
+      </div>
     </div>
   `).join("") || "Нет матчей";
 }
+
+window.updateOdds = async function(id, o1, ox, o2) {
+  const n1 = prompt("Новый коэффициент на П1:", o1);
+  if (n1 === null) return;
+  const nx = prompt("Новый коэффициент на X (оставьте пустым, если нет):", ox || "");
+  if (nx === null) return;
+  const n2 = prompt("Новый коэффициент на П2:", o2);
+  if (n2 === null) return;
+  
+  try {
+    await api(`/api/admin/update-odds/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ o1: Number(n1), ox: nx ? Number(nx) : null, o2: Number(n2) })
+    });
+    toast("Кэфы обновлены!"); await loadEvents(); loadSettle();
+  } catch(e) { toast(e.message); }
+}
+
 window.settle = async function(id, result) {
   if (!confirm("Рассчитать матч?")) return;
   try { await api(`/api/admin/settle/${id}`, { method: "POST", body: JSON.stringify({ result }) }); toast("Рассчитано!"); await loadEvents(); loadSettle(); } catch(e) { toast(e.message); }
