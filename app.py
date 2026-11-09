@@ -4,7 +4,6 @@ import hmac
 import hashlib
 import logging
 import random
-import asyncio
 from urllib.parse import parse_qsl
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -31,7 +30,6 @@ ALLOW_DEV_AUTH = os.getenv("ALLOW_DEV_AUTH", "false").lower() == "true"
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) if BOT_TOKEN else None
 dp = Dispatcher()
 
-# --- АВТОРИЗАЦИЯ ---
 def validate_init_data(init_data: str):
     if not BOT_TOKEN or not init_data: return None
     try:
@@ -55,7 +53,6 @@ async def current_user(request: Request):
     if ALLOW_DEV_AUTH: return {"id": int(os.getenv("DEV_USER_ID", "1")), "first_name": "Тест", "username": "test"}
     raise HTTPException(status_code=401, detail="Откройте через Telegram")
 
-# --- БАЗА ДАННЫХ ---
 async def init_db():
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("""CREATE TABLE IF NOT EXISTS users (
@@ -68,14 +65,11 @@ async def init_db():
             result TEXT, odds_1 REAL NOT NULL DEFAULT 2.0, odds_x REAL, odds_2 REAL NOT NULL DEFAULT 2.0,
             created_at TEXT NOT NULL
         )""")
-        # УБИРАЕМ UNIQUE И ДОБАВЛЯЕМ locked_odds
         await db.execute("""CREATE TABLE IF NOT EXISTS predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             event_id INTEGER NOT NULL, choice TEXT NOT NULL, points INTEGER NOT NULL,
             locked_odds REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
         )""")
-        await db.execute("""CREATE TABLE IF NOT EXISTS promo_codes (code TEXT PRIMARY KEY, reward INTEGER NOT NULL)""")
-        await db.execute("""CREATE TABLE IF NOT EXISTS promo_uses (user_id INTEGER NOT NULL, code TEXT NOT NULL, PRIMARY KEY (user_id, code))""")
         await db.execute("""CREATE TABLE IF NOT EXISTS cases (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
             price INTEGER NOT NULL, image_url TEXT NOT NULL
@@ -89,9 +83,6 @@ async def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             skin_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'owned',
             created_at TEXT NOT NULL
-        )""")
-        await db.execute("""CREATE TABLE IF NOT EXISTS user_settings (
-            user_id INTEGER PRIMARY KEY, forced_skin_id INTEGER, custom_upgrade_chance INTEGER DEFAULT 10
         )""")
         await db.execute("""CREATE TABLE IF NOT EXISTS crash_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
@@ -132,7 +123,6 @@ async def ensure_user(user):
         await db.commit()
     return uid
 
-# --- БОТ ---
 @dp.message()
 async def start_message(message):
     if not BOT_WEBAPP_URL: return
@@ -161,7 +151,6 @@ async def telegram_webhook(request: Request):
     await dp.feed_update(bot, update)
     return JSONResponse({"ok": True})
 
-# --- API ---
 @app.get("/api/me")
 async def me(request: Request):
     user = await current_user(request)
@@ -223,7 +212,6 @@ async def get_history(request: Request):
         """, (uid,))
         return [dict(r) for r in await cur.fetchall()]
 
-# --- КРАШ ---
 @app.post("/api/crash/play")
 async def play_crash(request: Request):
     user = await current_user(request)
@@ -234,9 +222,8 @@ async def play_crash(request: Request):
     
     if bet < 1: raise HTTPException(400, "Мин. ставка 1")
     
-    # Генерируем краш-поинт (рандом от 1.0 до 10.0, с шансом на ранний краш)
     rand = random.random()
-    if rand < 0.5: crash_point = round(random.uniform(1.0, 1.5), 2) # 50% шанс раннего краша
+    if rand < 0.5: crash_point = round(random.uniform(1.0, 1.5), 2)
     else: crash_point = round(random.uniform(1.5, 15.0), 2)
     
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -258,14 +245,44 @@ async def play_crash(request: Request):
         
     return {"ok": True, "crash_point": crash_point, "win": win_amount > 0, "win_amount": win_amount}
 
-@app.get("/api/crash/history")
-async def crash_history(request: Request):
-    user = await current_user(request)
-    uid = await ensure_user(user)
+@app.get("/api/cases")
+async def get_cases(request: Request):
+    await current_user(request)
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT bet_amount, multiplier, win_amount, created_at FROM crash_history WHERE user_id=? ORDER BY id DESC LIMIT 10", (uid,))
+        cur = await db.execute("SELECT * FROM cases")
         return [dict(r) for r in await cur.fetchall()]
+
+@app.post("/api/cases/open")
+async def open_case(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    body = await request.json()
+    case_id = int(body.get("case_id", 0))
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT price FROM cases WHERE id=?", (case_id,))
+        case = await cur.fetchone()
+        cur = await db.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+        row = await cur.fetchone()
+        if not row or row["balance"] < case["price"]: raise HTTPException(400, "Мало баллов")
+        
+        roll = random.randint(1, 100)
+        rarity = "Common" if roll <= 60 else "Rare" if roll <= 85 else "Immortal"
+        
+        cur = await db.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=? AND rarity=?", (case_id, rarity))
+        skins = await cur.fetchall()
+        if not skins:
+            cur = await db.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=?", (case_id,))
+            skins = await cur.fetchall()
+        skin = random.choice(skins)
+        
+        await db.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (case["price"], uid))
+        await db.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", (uid, skin["id"], datetime.now(timezone.utc).isoformat()))
+        await db.commit()
+    return {"ok": True, "skin": dict(skin)}
 
 # --- АДМИНКА ---
 @app.post("/api/admin/give-points")
@@ -291,6 +308,17 @@ async def give_points(request: Request):
         await db.commit()
     return {"ok": True, "message": f"Успешно! {action} {amount} баллов"}
 
+@app.post("/api/admin/create-event")
+async def admin_create_event(request: Request):
+    user = await current_user(request)
+    if await ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    body = await request.json()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("INSERT INTO events (sport, title, odds_1, odds_x, odds_2, created_at) VALUES (?,?,?,?,?,?)",
+                         (body["sport"], body["title"], body["o1"], body.get("ox"), body["o2"], datetime.now(timezone.utc).isoformat()))
+        await db.commit()
+    return {"ok": True}
+
 @app.post("/api/admin/settle/{event_id}")
 async def settle_event(event_id: int, request: Request):
     user = await current_user(request)
@@ -302,10 +330,9 @@ async def settle_event(event_id: int, request: Request):
         db.row_factory = aiosqlite.Row
         await db.execute("UPDATE events SET status='settled', result=? WHERE id=?", (result, event_id))
         cur = await db.execute("SELECT user_id, points, choice, locked_odds FROM predictions WHERE event_id=? AND status='pending'", (event_id,))
-        preds = await cur.fetchall()
-        for p in preds:
+        for p in await cur.fetchall():
             if p["choice"] == result:
-                reward = int(p["points"] * p["locked_odds"]) # ИСПОЛЬЗУЕМ ЗАФИКСИРОВАННЫЙ КЭФ
+                reward = int(p["points"] * p["locked_odds"])
                 await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (reward, p["user_id"]))
                 await db.execute("UPDATE predictions SET status='won' WHERE user_id=? AND event_id=?", (p["user_id"], event_id))
             else:
