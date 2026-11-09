@@ -78,6 +78,13 @@ async def init_db():
             status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL,
             UNIQUE(user_id, event_id)
         )""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS promo_codes (
+            code TEXT PRIMARY KEY, reward INTEGER NOT NULL
+        )""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS promo_uses (
+            user_id INTEGER NOT NULL, code TEXT NOT NULL,
+            PRIMARY KEY (user_id, code)
+        )""")
         await db.commit()
 
 async def ensure_user(user):
@@ -149,6 +156,37 @@ async def me(request: Request):
     row["is_admin"] = uid in ADMIN_IDS
     return row
 
+@app.post("/api/promo")
+async def activate_promo(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    body = await request.json()
+    code = str(body.get("code", "")).strip().upper()
+    
+    if not code:
+        raise HTTPException(400, "Введите промокод")
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute("SELECT reward FROM promo_codes WHERE code=?", (code,))
+        promo = await cur.fetchone()
+        if not promo:
+            await db.rollback()
+            raise HTTPException(404, "Такого промокода не существует")
+            
+        reward = promo[0]
+        
+        cur = await db.execute("SELECT 1 FROM promo_uses WHERE user_id=? AND code=?", (uid, code))
+        if await cur.fetchone():
+            await db.rollback()
+            raise HTTPException(400, "Вы уже активировали этот промокод")
+            
+        await db.execute("INSERT INTO promo_uses(user_id, code) VALUES(?, ?)", (uid, code))
+        await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (reward, uid))
+        await db.commit()
+        
+    return {"ok": True, "message": f"Успешно! Вы получили {reward} баллов", "reward": reward}
+
 @app.get("/api/events")
 async def events(request: Request):
     user = await current_user(request)
@@ -218,8 +256,6 @@ async def leaderboard(request: Request):
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT first_name, username, balance FROM users ORDER BY balance DESC LIMIT 50")
         return [dict(r) for r in await cur.fetchall()]
-
-# --- АДМИНСКИЕ ЭНДПОИНТЫ ---
 
 @app.post("/api/admin/events")
 async def create_event(request: Request):
@@ -316,6 +352,35 @@ async def give_points(request: Request):
         await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (amount, target_id))
         await db.commit()
     return {"ok": True, "message": f"Начислено {amount} баллов"}
+
+# НОВЫЙ ЭНДПОИНТ ДЛЯ СОЗДАНИЯ ПРОМОКОДА
+@app.post("/api/admin/create-promo")
+async def create_promo(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    if uid not in ADMIN_IDS:
+        raise HTTPException(403, "Нет доступа")
+        
+    body = await request.json()
+    code = str(body.get("code", "")).strip().upper()
+    try:
+        reward = int(body.get("reward", 0))
+    except Exception:
+        raise HTTPException(400, "Неверный формат суммы")
+        
+    if not code or len(code) < 3:
+        raise HTTPException(400, "Код должен быть не короче 3 символов")
+    if reward < 1 or reward > 1000000:
+        raise HTTPException(400, "Сумма должна быть от 1 до 1 000 000")
+        
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            await db.execute("INSERT INTO promo_codes (code, reward) VALUES (?, ?)", (code, reward))
+            await db.commit()
+        except aiosqlite.IntegrityError:
+            raise HTTPException(400, "Промокод с таким названием уже существует")
+            
+    return {"ok": True, "message": f"Промокод {code} на {reward} баллов создан!"}
 
 @app.post("/api/admin/events/{event_id}/settle")
 async def settle_event(event_id: int, request: Request):
