@@ -4,7 +4,7 @@ tg?.expand();
 const initData = tg?.initData || "";
 const headers = {"Content-Type":"application/json","X-Telegram-Init-Data":initData};
 let me = null, events = [];
-let prevOdds = {}; // Память для подсветки кэфов
+let prevOdds = {}; 
 const $ = id => document.getElementById(id);
 
 async function api(path, options={}) {
@@ -34,7 +34,6 @@ async function loadEvents() {
   $("event-list").innerHTML = open.length ? open.map(e=>{
     const hasDraw = e.sport === "Футбол";
     
-    // Подсветка изменившихся кэфов
     const p = prevOdds[e.id] || { o1: e.odds_1, ox: e.odds_x, o2: e.odds_2 };
     let color1 = "", colorX = "", color2 = "";
     if (e.odds_1 > p.o1) color1 = "color: #4ade80;"; 
@@ -92,6 +91,27 @@ async function loadRating() {
   const rows = await api("/api/leaderboard");
   $("rating-list").innerHTML = rows.length ? rows.map((r,i)=>`
     <div class="rank"><span>${i+1}. ${escapeHtml(r.first_name || r.username || "Игрок")}</span><b>${Number(r.balance).toLocaleString("ru-RU")} PTS</b></div>`).join("") : `<div class="empty">Рейтинг пока пуст.</div>`;
+}
+async function loadAdminUsers() {
+  if (!me?.is_admin) return;
+  const userSelect = $("give-user-id");
+  if (!userSelect) return;
+  
+  try {
+    const users = await api("/api/admin/users");
+    if (users.length === 0) {
+       userSelect.innerHTML = `<option value="" disabled selected>Нет игроков</option>`;
+       return;
+    }
+    userSelect.innerHTML = `<option value="" disabled selected>Выберите игрока...</option>` + 
+      users.map(u => {
+        const name = u.first_name || "Без имени";
+        const uname = u.username ? `(@${u.username})` : `(ID: ${u.user_id})`;
+        return `<option value="${u.user_id}">${escapeHtml(name)} ${escapeHtml(uname)} — ${u.balance} PTS</option>`;
+      }).join("");
+  } catch(e) {
+    console.error(e);
+  }
 }
 function renderSettle() {
   const open = events.filter(e=>e.status==="open");
@@ -176,6 +196,7 @@ $("give-points")?.addEventListener("submit", async e => {
     });
     $("give-points").reset();
     toast(data.message || "Баллы начислены");
+    await loadAdminUsers(); // Обновляем список, чтобы увидеть новый баланс
   } catch (err) {
     toast(err.message);
   }
@@ -183,7 +204,9 @@ $("give-points")?.addEventListener("submit", async e => {
 document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click",async()=>{
   document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===btn));
   document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("hidden",p.id!==btn.dataset.tab));
+  
   if(btn.dataset.tab==="rating") await loadRating();
+  if(btn.dataset.tab==="admin") await loadAdminUsers();
 }));
 async function refresh(){await loadMe();await loadEvents()}
 
@@ -192,7 +215,6 @@ async function refresh(){await loadMe();await loadEvents()}
   catch(e){$("event-list").innerHTML=`<div class="empty">${escapeHtml(e.message)}<br><br>Откройте Mini App через Telegram-бота.</div>`;}
 })();
 
-// Автообновление экрана каждые 15 секунд
 setInterval(async () => {
   if (document.getElementById("matches").classList.contains("hidden") === false) {
     try {
