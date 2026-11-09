@@ -213,8 +213,10 @@ async def predict(request: Request):
         choice = str(body["choice"])
     except Exception:
         raise HTTPException(400, "Проверьте данные прогноза")
-    if points < 1 or points > 1000:
-        raise HTTPException(400, "Можно использовать от 1 до 1000 баллов")
+    
+    # НОВЫЙ ЛИМИТ ДО 1 000 000
+    if points < 1 or points > 1000000:
+        raise HTTPException(400, "Можно использовать от 1 до 1 000 000 баллов")
     
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("BEGIN IMMEDIATE")
@@ -342,8 +344,8 @@ async def give_points(request: Request):
     except Exception:
         raise HTTPException(400, "Неверный формат данных")
         
-    if amount < 1 or amount > 100000:
-        raise HTTPException(400, "Можно начислить от 1 до 100 000 баллов")
+    if amount < 1 or amount > 1000000:
+        raise HTTPException(400, "Можно начислить от 1 до 1 000 000 баллов")
     
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cur = await db.execute("SELECT user_id FROM users WHERE user_id=?", (target_id,))
@@ -353,7 +355,6 @@ async def give_points(request: Request):
         await db.commit()
     return {"ok": True, "message": f"Начислено {amount} баллов"}
 
-# НОВЫЙ ЭНДПОИНТ ДЛЯ СОЗДАНИЯ ПРОМОКОДА
 @app.post("/api/admin/create-promo")
 async def create_promo(request: Request):
     user = await current_user(request)
