@@ -65,7 +65,6 @@ async def init_db():
             result TEXT, odds_1 REAL NOT NULL DEFAULT 2.0, odds_x REAL, odds_2 REAL NOT NULL DEFAULT 2.0,
             created_at TEXT NOT NULL
         )""")
-        # Добавлен locked_odds, убрано ограничение UNIQUE
         await db.execute("""CREATE TABLE IF NOT EXISTS predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             event_id INTEGER NOT NULL, choice TEXT NOT NULL, points INTEGER NOT NULL,
@@ -123,7 +122,6 @@ async def ensure_user(user):
         await db.commit()
     return uid
 
-# ОРИГИНАЛЬНЫЙ СТАРТОВЫЙ ТЕКСТ С КАНАЛОМ
 @dp.message()
 async def start_message(message):
     if not BOT_WEBAPP_URL:
@@ -392,6 +390,17 @@ async def give_points(request: Request):
         await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (final_amount, u_row["user_id"]))
         await db.commit()
     return {"ok": True, "message": f"Успешно! {action} {amount} баллов"}
+
+@app.post("/api/admin/update-odds/{event_id}")
+async def admin_update_odds(event_id: int, request: Request):
+    user = await current_user(request)
+    if await ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    body = await request.json()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("UPDATE events SET odds_1=?, odds_x=?, odds_2=? WHERE id=?", 
+                         (body["o1"], body.get("ox"), body["o2"], event_id))
+        await db.commit()
+    return {"ok": True, "message": "Коэффициенты обновлены!"}
 
 @app.post("/api/admin/user-settings")
 async def admin_user_settings(request: Request):
