@@ -367,7 +367,6 @@ async def upgrade_skin(request: Request):
         if not current_skin:
             await db.rollback(); raise HTTPException(400, "Скин не найден")
         
-        # Ищем скин дороже для цели
         cur = await db.execute("SELECT id, name, image_url, price, rarity FROM skins WHERE price > ? ORDER BY RANDOM() LIMIT 1", (current_skin["price"],))
         target_skin = await cur.fetchone()
         if not target_skin:
@@ -379,7 +378,6 @@ async def upgrade_skin(request: Request):
             await db.execute("UPDATE inventory SET status='upgraded' WHERE id=?", (inv_id,))
             await db.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", (uid, target_skin["id"], datetime.now(timezone.utc).isoformat()))
             await db.commit()
-            # Возвращаем и старый, и новый скин для анимации
             return {"ok": True, "success": True, "old_skin": dict(current_skin), "target_skin": dict(target_skin)}
         else:
             await db.execute("UPDATE inventory SET status='lost' WHERE id=?", (inv_id,))
