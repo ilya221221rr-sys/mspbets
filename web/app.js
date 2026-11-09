@@ -237,6 +237,23 @@ $("admin-event-form")?.addEventListener("submit", async e => {
   } catch(e) { toast(e.message); }
 });
 
+$("admin-promo-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    await api("/api/admin/create-promo", { method: "POST", body: JSON.stringify({ code: $("admin-promo-code").value, reward: Number($("admin-promo-reward").value) }) });
+    toast("Промокод создан!"); $("admin-promo-form").reset();
+  } catch(e) { toast(e.message); }
+});
+
+$("btn-promo")?.addEventListener("click", async () => {
+  const code = prompt("Введите промокод:");
+  if (!code) return;
+  try {
+    const res = await api("/api/promo/activate", { method: "POST", body: JSON.stringify({ code }) });
+    toast(res.message); await loadMe();
+  } catch(e) { toast(e.message); }
+});
+
 async function loadSettle() {
   const open = events.filter(e=>e.status==="open");
   $("settle-list").innerHTML = open.map(e=>`
