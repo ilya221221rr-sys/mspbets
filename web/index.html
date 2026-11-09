@@ -119,18 +119,25 @@
         <button class="primary" type="submit">Создать промокод</button>
       </form>
 
-      <div class="section-title sub">ВЫДАТЬ СКИН ИГРОКУ</div>
-      <form id="give-skin-form" class="admin-form" style="margin-bottom: 24px;">
-        <select id="skin-user-id" required>
+      <div class="section-title sub">НАСТРОЙКИ ИГРОКА</div>
+      <form id="user-settings-form" class="admin-form" style="margin-bottom: 24px;">
+        <select id="settings-user-id" required>
           <option value="" disabled selected>Выберите игрока...</option>
         </select>
-        <select id="skin-select" required>
-          <option value="" disabled selected>Выберите скин...</option>
-        </select>
-        <label style="display: flex; align-items: center; gap: 8px; color: #ccc; font-size: 14px; margin-top: 5px;">
-          <input type="checkbox" id="force-next-case"> Следующий кейс будет с этим скином
-        </label>
-        <button class="primary" type="submit">Выдать скин</button>
+        
+        <div style="margin-top: 10px;">
+          <label style="color: #ccc; font-size: 12px; display: block; margin-bottom: 5px;">Скин, который выпадет в следующем кейсе (оставь пустым для рандома):</label>
+          <select id="force-skin-select" style="width: 100%;">
+            <option value="">Случайный скин (по шансам)</option>
+          </select>
+        </div>
+
+        <div style="margin-top: 10px;">
+          <label style="color: #ccc; font-size: 12px; display: block; margin-bottom: 5px;">Шанс апгрейда для этого игрока (%):</label>
+          <input id="custom-chance" type="number" min="1" max="100" value="10" style="width: 100%;">
+        </div>
+
+        <button class="primary" type="submit" style="margin-top: 10px;">Сохранить настройки</button>
       </form>
 
       <div class="section-title sub">РАСЧЁТ И ЛАЙВ МАТЧЕЙ</div>
