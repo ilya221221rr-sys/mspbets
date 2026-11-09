@@ -65,7 +65,10 @@ async function loadEvents() {
         ${hasDraw ? `<button class="choice" data-choice="X">Ничья</button>` : ''}
         <button class="choice" data-choice="2">П2</button>
       </div>
-      <div class="bet-row"><input class="points" type="number" min="1" max="1000" value="100" aria-label="Баллы"><button class="primary submit-prediction">Прогноз</button></div>`}
+      <div class="bet-row">
+        <input class="points" type="number" min="1" max="${me.balance}" value="${Math.min(me.balance, 100)}" aria-label="Баллы">
+        <button class="primary submit-prediction">Прогноз</button>
+      </div>`}
     </article>`;
   }).join("") : `<div class="empty">Пока нет активных матчей.</div>`;
   
@@ -201,7 +204,6 @@ $("give-points")?.addEventListener("submit", async e => {
     toast(err.message);
   }
 });
-// ОБРАБОТЧИК СОЗДАНИЯ ПРОМОКОДА
 $("create-promo")?.addEventListener("submit", async e => {
   e.preventDefault();
   try {
@@ -218,7 +220,6 @@ $("create-promo")?.addEventListener("submit", async e => {
     toast(err.message);
   }
 });
-// ОБРАБОТЧИК АКТИВАЦИИ ПРОМОКОДА ИГРОКОМ
 $("btn-promo").addEventListener("click", async () => {
   const code = prompt("Введите ваш промокод (без учета регистра):");
   if (!code) return;
