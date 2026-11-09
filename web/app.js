@@ -190,11 +190,12 @@ $("give-points")?.addEventListener("submit", async e => {
       method: "POST",
       body: JSON.stringify({
         user_id: Number($("give-user-id").value),
-        amount: Number($("give-amount").value)
+        amount: Number($("give-amount").value),
+        action: $("points-action").value
       })
     });
     $("give-points").reset();
-    toast(data.message || "Баллы начислены");
+    toast(data.message || "Успешно");
     await loadAdminUsers();
   } catch (err) { toast(err.message); }
 });
@@ -301,7 +302,7 @@ window.openCase = async function(caseId) {
 
 // --- ИНВЕНТАРЬ, ПРОДАЖА И АПГРЕЙД ---
 let currentUpgradeInvId = null;
-let currentUpgradeChance = 30;
+let currentUpgradeChance = 20; // По умолчанию 20% (x5)
 
 async function loadInventory() {
   const items = await api("/api/inventory");
@@ -338,7 +339,6 @@ window.selectUpgradeSkin = function(invId, imgUrl) {
   $("upgrade-img-left").src = imgUrl;
   $("upgrade-result-text").innerHTML = "";
   
-  // Подставляем правый скин (для визуала). Сервер сам подберет по цене.
   $("upgrade-img-right").src = "https://i.imgur.com/rQAXrZd.png"; 
 }
 
