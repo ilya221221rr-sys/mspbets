@@ -35,13 +35,31 @@
     </section>
     <section id="admin" class="panel hidden">
       <div class="section-title">АДМИН-ПАНЕЛЬ</div>
+      
+      <!-- Блок добавления матча -->
       <form id="create-event" class="admin-form">
         <select id="sport"><option>CS2</option><option>Dota 2</option><option>Футбол</option><option>Теннис</option></select>
         <input id="title" placeholder="Например: Team A — Team B" required>
         <input id="starts" placeholder="Дата и время (текстом)">
-        <input id="multiplier" type="number" min="1" max="10" step="0.1" value="2">
+        
+        <!-- Три поля для коэффициентов -->
+        <div style="display: flex; gap: 8px;">
+          <input id="odds_1" type="number" min="1.01" max="50" step="0.01" placeholder="Кф. П1" required style="flex: 1;">
+          <input id="odds_x" type="number" min="1.01" max="50" step="0.01" placeholder="Кф. X" style="flex: 1;">
+          <input id="odds_2" type="number" min="1.01" max="50" step="0.01" placeholder="Кф. П2" required style="flex: 1;">
+        </div>
+        
         <button class="primary" type="submit">Добавить матч</button>
       </form>
+
+      <!-- Блок начисления баллов -->
+      <div class="section-title sub">ВЫДАТЬ БАЛЛЫ ИГРОКУ</div>
+      <form id="give-points" class="admin-form" style="margin-bottom: 24px;">
+        <input id="give-user-id" type="number" placeholder="Telegram ID игрока (цифры)" required>
+        <input id="give-amount" type="number" min="1" max="100000" placeholder="Сумма баллов" required>
+        <button class="primary" type="submit">Начислить баллы</button>
+      </form>
+
       <div class="section-title sub">РАСЧЁТ МАТЧЕЙ</div>
       <div id="settle-list"></div>
     </section>
