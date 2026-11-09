@@ -65,7 +65,7 @@ async def init_db():
             result TEXT, odds_1 REAL NOT NULL DEFAULT 2.0, odds_x REAL, odds_2 REAL NOT NULL DEFAULT 2.0,
             created_at TEXT NOT NULL
         )""")
-        # Убрали UNIQUE(user_id, event_id), добавили locked_odds
+        # Добавлен locked_odds, убрано ограничение UNIQUE
         await db.execute("""CREATE TABLE IF NOT EXISTS predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             event_id INTEGER NOT NULL, choice TEXT NOT NULL, points INTEGER NOT NULL,
@@ -123,11 +123,25 @@ async def ensure_user(user):
         await db.commit()
     return uid
 
+# ОРИГИНАЛЬНЫЙ СТАРТОВЫЙ ТЕКСТ С КАНАЛОМ
 @dp.message()
 async def start_message(message):
-    if not BOT_WEBAPP_URL: return
-    await message.answer("🏆 <b>MSPBETS</b>\n\nДелай прогнозы и поднимайся в рейтинге!", reply_markup=None)
-    await bot.set_chat_menu_button(chat_id=message.chat.id, menu_button=MenuButtonWebApp(text="Открыть MSPBETS", web_app=WebAppInfo(url=BOT_WEBAPP_URL)))
+    if not BOT_WEBAPP_URL:
+        await message.answer("MSPBETS запущен. Администратору нужно указать BOT_WEBAPP_URL.")
+        return
+    await message.answer(
+        "🏆 <b>MSPBETS</b>\n\n"
+        "Делай прогнозы на матчи, получай виртуальные баллы и поднимайся в рейтинге!\n"
+        "Баллы не имеют денежной стоимости, их нельзя купить или вывести.\n\n"
+        "📢 <b>Наш Telegram-канал:</b> https://t.me/mspbetsprizi\n"
+        "(Там мы публикуем новые промокоды и анонсы обновлений)",
+        reply_markup=None
+    )
+    await bot.set_chat_menu_button(
+        chat_id=message.chat.id,
+        menu_button=MenuButtonWebApp(text="Открыть MSPBETS", web_app=WebAppInfo(url=BOT_WEBAPP_URL))
+    )
+    await message.answer(f"Открой приложение по кнопке меню «Открыть MSPBETS».")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
