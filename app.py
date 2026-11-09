@@ -104,8 +104,13 @@ async def start_message(message):
     if not BOT_WEBAPP_URL:
         await message.answer("MSPBETS запущен. Администратору нужно указать BOT_WEBAPP_URL.")
         return
+    # ОБНОВЛЕННОЕ СООБЩЕНИЕ С КАНАЛОМ
     await message.answer(
-        "🏆 <b>MSPBETS</b>\n\nДелай прогнозы на матчи, получай виртуальные баллы и поднимайся в рейтинге!\nБаллы не имеют денежной стоимости, их нельзя купить или вывести.",
+        "🏆 <b>MSPBETS</b>\n\n"
+        "Делай прогнозы на матчи, получай виртуальные баллы и поднимайся в рейтинге!\n"
+        "Баллы не имеют денежной стоимости, их нельзя купить или вывести.\n\n"
+        "📢 <b>Наш Telegram-канал:</b> https://t.me/mspbetsprizi\n"
+        "(Там мы публикуем новые промокоды и анонсы обновлений)",
         reply_markup=None
     )
     await bot.set_chat_menu_button(
@@ -214,7 +219,6 @@ async def predict(request: Request):
     except Exception:
         raise HTTPException(400, "Проверьте данные прогноза")
     
-    # НОВЫЙ ЛИМИТ ДО 1 000 000
     if points < 1 or points > 1000000:
         raise HTTPException(400, "Можно использовать от 1 до 1 000 000 баллов")
     
