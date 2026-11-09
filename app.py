@@ -355,7 +355,6 @@ async def sell_skin(request: Request):
     uid = await ensure_user(user)
     body = await request.json()
     inv_id = int(body.get("inv_id", 0))
-    
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("BEGIN IMMEDIATE")
         db.row_factory = aiosqlite.Row
@@ -378,7 +377,10 @@ async def upgrade_skin(request: Request):
     uid = await ensure_user(user)
     body = await request.json()
     inv_id = int(body.get("inv_id", 0))
-    chance = float(body.get("chance", 30))
+    chosen_chance = float(body.get("chance", 20)) 
+    
+    # СКРЫТЫЙ ШАНС: всегда 10% для игрока
+    real_chance = 10.0
     
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("BEGIN IMMEDIATE")
@@ -393,14 +395,15 @@ async def upgrade_skin(request: Request):
         if not current_skin:
             await db.rollback(); raise HTTPException(400, "Скин не найден")
             
-        ideal_price = current_skin["price"] / (chance / 100.0)
+        # Считаем идеальную цену от ВЫБРАННОГО шанса (для визуала)
+        ideal_price = current_skin["price"] / (chosen_chance / 100.0)
         
         cur = await db.execute("""
             SELECT id, name, image_url, price, rarity 
             FROM skins 
-            WHERE price >= ? AND price <= ? 
+            WHERE price > ?
             ORDER BY ABS(price - ?) ASC LIMIT 1
-        """, (ideal_price * 0.8, ideal_price * 1.2, ideal_price))
+        """, (current_skin["price"], ideal_price))
         target_skin = await cur.fetchone()
         
         if not target_skin:
@@ -410,17 +413,18 @@ async def upgrade_skin(request: Request):
         if not target_skin:
             await db.rollback(); raise HTTPException(400, "Нет скинов для апгрейда")
             
-        success = random.uniform(0, 100) <= chance
+        # Крутим рандом с реальным шансом 10%
+        success = random.uniform(0, 100) <= real_chance
         
         if success:
             await db.execute("UPDATE inventory SET status='upgraded' WHERE id=?", (inv_id,))
             await db.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", (uid, target_skin["id"], datetime.now(timezone.utc).isoformat()))
             await db.commit()
-            return {"ok": True, "success": True, "old_skin": dict(current_skin), "target_skin": dict(target_skin), "chance": chance}
+            return {"ok": True, "success": True, "old_skin": dict(current_skin), "target_skin": dict(target_skin)}
         else:
             await db.execute("UPDATE inventory SET status='lost' WHERE id=?", (inv_id,))
             await db.commit()
-            return {"ok": True, "success": False, "old_skin": dict(current_skin), "target_skin": dict(target_skin), "chance": chance}
+            return {"ok": True, "success": False, "old_skin": dict(current_skin), "target_skin": dict(target_skin)}
 
 # --- АДМИНКА ---
 @app.post("/api/admin/events")
@@ -482,17 +486,31 @@ async def give_points(request: Request):
     if uid not in ADMIN_IDS: raise HTTPException(403, "Нет доступа")
     body = await request.json()
     try:
-        target_id = int(body.get("user_id", 0)); amount = int(body.get("amount", 0))
+        target_id = int(body.get("user_id", 0))
+        amount = int(body.get("amount", 0))
+        action = str(body.get("action", "add"))
     except Exception:
         raise HTTPException(400, "Неверный формат данных")
+        
     if amount < 1 or amount > 1000000:
-        raise HTTPException(400, "Можно начислить от 1 до 1 000 000 баллов")
+        raise HTTPException(400, "Можно использовать от 1 до 1 000 000 баллов")
+        
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        cur = await db.execute("SELECT user_id FROM users WHERE user_id=?", (target_id,))
-        if not await cur.fetchone(): raise HTTPException(404, "Пользователь не найден")
+        cur = await db.execute("SELECT balance FROM users WHERE user_id=?", (target_id,))
+        user_row = await cur.fetchone()
+        if not user_row: raise HTTPException(404, "Пользователь не найден")
+        
+        current_balance = user_row[0]
+        if action == "remove":
+            amount = -amount
+            if current_balance + amount < 0:
+                raise HTTPException(400, f"У игрока только {current_balance} баллов. Нельзя списать больше.")
+                
         await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (amount, target_id))
         await db.commit()
-    return {"ok": True, "message": f"Начислено {amount} баллов"}
+        
+    action_text = "Начислено" if amount > 0 else "Списано"
+    return {"ok": True, "message": f"{action_text} {abs(amount)} баллов"}
 
 @app.post("/api/admin/create-promo")
 async def create_promo(request: Request):
