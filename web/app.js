@@ -424,4 +424,13 @@ async function refresh(){await loadMe();await loadEvents()}
 })();
 
 setInterval(async () => {
-  if (document.getElementById("matches").classList.contains("hidden") ===
+  if (document.getElementById("matches").classList.contains("hidden") === false) {
+    try {
+      const newEvents = await api("/api/events");
+      if (JSON.stringify(newEvents) !== JSON.stringify(events)) {
+        events = newEvents;
+        loadEvents();
+      }
+    } catch(e) {}
+  }
+}, 15000);
