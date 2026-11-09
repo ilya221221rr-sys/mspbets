@@ -224,7 +224,6 @@ $("btn-promo").addEventListener("click", async () => {
   } catch(err) { toast(err.message); }
 });
 
-// --- КЕЙСЫ ---
 async function loadCases() {
   const cases = await api("/api/cases");
   $("cases-list").innerHTML = cases.map(c => `
@@ -238,7 +237,6 @@ async function loadCases() {
 }
 
 window.openCase = async function(caseId) {
-  const resultContainer = $("case-result");
   const strip = $("case-strip");
   const pointer = $("case-pointer");
   const resultText = $("case-result-text");
@@ -276,7 +274,6 @@ window.openCase = async function(caseId) {
     setTimeout(() => {
       const screenWidth = window.innerWidth;
       const targetOffset = (34 * 90) - (screenWidth / 2) + 40;
-      
       strip.style.transition = "transform 4s cubic-bezier(0.1, 0.7, 0.1, 1)";
       strip.style.transform = `translateX(-${targetOffset}px)`;
       
@@ -302,91 +299,84 @@ window.openCase = async function(caseId) {
   }
 }
 
-// --- ИНВЕНТАРЬ И АПГРЕЙД ---
+// --- ИНВЕНТАРЬ, ПРОДАЖА И АПГРЕЙД ---
+let currentUpgradeInvId = null;
+let currentUpgradeChance = 30;
+
 async function loadInventory() {
   const items = await api("/api/inventory");
   $("inventory-list").innerHTML = items.length ? items.map(i => `
-    <div style="display: flex; align-items: center; gap: 10px; background: #1a1a1a; padding: 10px; border-radius: 8px; border: 1px solid #333;">
-      <img src="${i.image_url}" style="width: 50px; height: 50px; border-radius: 4px;">
-      <div style="flex: 1; font-size: 12px;">
-        <div style="font-weight: bold;">${escapeHtml(i.name)}</div>
-        <div style="color: #55ff00;">${i.price} PTS</div>
+    <div style="display: flex; flex-direction: column; gap: 10px; background: #1a1a1a; padding: 10px; border-radius: 8px; border: 1px solid #333;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <img src="${i.image_url}" style="width: 50px; height: 50px; border-radius: 4px;">
+        <div style="flex: 1; font-size: 12px;">
+          <div style="font-weight: bold;">${escapeHtml(i.name)}</div>
+          <div style="color: #55ff00;">${i.price} PTS</div>
+        </div>
       </div>
-      <button onclick="upgradeSkin(${i.inv_id})" style="background: #ffaa00; color: black; border: none; padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 12px;">Апгрейд</button>
+      <div style="display: flex; gap: 5px;">
+        <button onclick="selectUpgradeSkin(${i.inv_id}, '${i.image_url}')" style="flex: 1; background: #ffaa00; color: black; border: none; padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 12px;">Апгрейд</button>
+        <button onclick="sellSkin(${i.inv_id}, '${escapeHtml(i.name)}')" style="flex: 1; background: #f87171; color: white; border: none; padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 12px;">Продать</button>
+      </div>
     </div>
   `).join("") : `<div class="empty">У вас пока нет скинов</div>`;
 }
 
-window.upgradeSkin = async function(invId) {
-  if (!confirm("Шанс апгрейда 30%. При неудаче скин сгорает. Вы уверены?")) return;
+window.sellSkin = async function(invId, skinName) {
+  if (!confirm(`Вы уверены, что хотите продать ${skinName}?`)) return;
+  try {
+    const data = await api("/api/inventory/sell", { method: "POST", body: JSON.stringify({ inv_id: invId }) });
+    toast(data.message || "Скин успешно продан!");
+    await loadMe();
+    await loadInventory();
+  } catch(e) { toast(e.message); }
+}
+
+window.selectUpgradeSkin = function(invId, imgUrl) {
+  currentUpgradeInvId = invId;
+  $("upgrade-interface").style.display = "block";
+  $("upgrade-img-left").src = imgUrl;
+  $("upgrade-result-text").innerHTML = "";
   
-  const resultContainer = $("upgrade-result");
-  const strip = $("upgrade-strip");
-  const resultText = $("upgrade-text");
-  
-  resultContainer.style.display = "block";
-  strip.style.display = "flex";
-  resultText.style.display = "none";
+  // Подставляем правый скин (для визуала). Сервер сам подберет по цене.
+  $("upgrade-img-right").src = "https://i.imgur.com/rQAXrZd.png"; 
+}
+
+window.setChance = function(chance) {
+  currentUpgradeChance = chance;
+  document.querySelectorAll(".chance-btn").forEach(b => {
+    b.style.background = "#333";
+    b.style.color = "#fff";
+  });
+  event.target.style.background = "#55ff00";
+  event.target.style.color = "#000";
+}
+
+$("btn-do-upgrade").addEventListener("click", async () => {
+  if (!currentUpgradeInvId) return toast("Выберите скин");
+  $("upgrade-result-text").innerHTML = "Крутим...";
   
   try {
-    const data = await api("/api/upgrade", { method: "POST", body: JSON.stringify({ inv_id: invId }) });
+    const data = await api("/api/upgrade", { 
+      method: "POST", 
+      body: JSON.stringify({ inv_id: currentUpgradeInvId, chance: currentUpgradeChance }) 
+    });
     
-    const imgOld = data.old_skin.image_url;
-    const imgNew = data.target_skin.image_url;
-    
-    let stripHTML = "";
-    for (let i = 0; i < 30; i++) {
-      stripHTML += `<img src="${imgOld}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333;">`;
+    if (data.success) {
+      $("upgrade-result-text").innerHTML = `<h3 style="color: #55ff00;">УСПЕХ! Вы получили ${escapeHtml(data.target_skin.name)}</h3>`;
+      toast("Апгрейд успешен!");
+    } else {
+      $("upgrade-result-text").innerHTML = `<h3 style="color: #f87171;">НЕУДАЧА. Скин сгорел.</h3>`;
+      toast("Скин сгорел");
     }
-    stripHTML += `<img src="${imgNew}" style="width: 80px; height: 80px; border-radius: 4px; border: 2px solid #ffaa00; box-shadow: 0 0 10px #ffaa00;">`;
-    for (let i = 0; i < 5; i++) {
-      stripHTML += `<img src="${imgOld}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333;">`;
-    }
     
-    strip.innerHTML = stripHTML;
-    strip.style.transition = "none";
-    strip.style.transform = `translateX(0)`;
-    
-    setTimeout(() => {
-      const screenWidth = window.innerWidth;
-      const targetOffset = (34 * 90) - (screenWidth / 2) + 40;
-      
-      strip.style.transition = "transform 4s cubic-bezier(0.1, 0.7, 0.1, 1)";
-      strip.style.transform = `translateX(-${targetOffset}px)`;
-      
-      setTimeout(async () => {
-        strip.style.display = "none";
-        resultText.style.display = "block";
-        
-        if (data.success) {
-          resultText.innerHTML = `
-            <h3 style="color: #55ff00;">УСПЕХ!</h3>
-            <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin: 10px 0;">
-              <img src="${data.old_skin.image_url}" style="width: 50px; opacity: 0.5;">
-              <span>➜</span>
-              <img src="${data.target_skin.image_url}" style="width: 80px; border: 2px solid #55ff00; border-radius: 8px;">
-            </div>
-            <div style="font-weight: bold;">${escapeHtml(data.target_skin.name)}</div>
-            <div style="color: #55ff00;">${data.target_skin.price} PTS</div>
-          `;
-          toast("Апгрейд успешен!");
-        } else {
-          resultText.innerHTML = `
-            <h3 style="color: #f87171;">НЕУДАЧА</h3>
-            <img src="${data.old_skin.image_url}" style="width: 60px; opacity: 0.3; margin: 10px 0;">
-            <div style="color: #f87171;">Скин сгорел</div>
-          `;
-          toast("Скин сгорел");
-        }
-        await loadInventory();
-      }, 4100);
-    }, 100);
+    $("upgrade-interface").style.display = "none";
+    await loadInventory();
   } catch(e) {
     toast(e.message);
-    strip.style.display = "none";
-    resultContainer.style.display = "none";
+    $("upgrade-result-text").innerHTML = "";
   }
-}
+});
 
 document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click",async()=>{
   document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===btn));
