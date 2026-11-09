@@ -24,7 +24,6 @@ async function loadMe() {
 async function loadEvents() {
   events = await api("/api/events");
   const open = events.filter(e=>e.status==="open");
-  
   $("event-list").innerHTML = open.map(e=>{
     const hasDraw = e.sport === "Футбол";
     return `
@@ -65,18 +64,23 @@ async function loadHistory() {
   }).join("") : `<div class="empty">История пуста</div>`;
 }
 
+async function loadRating() {
+  const rows = await api("/api/rating");
+  $("rating-list").innerHTML = rows.map((r,i)=>`
+    <div class="rank" style="display: flex; justify-content: space-between; padding: 10px; background: #1a1a1a; margin-bottom: 5px; border-radius: 4px;">
+      <span>${i+1}. ${r.first_name || r.username}</span><b>${r.balance} PTS</b>
+    </div>`).join("") || `<div class="empty">Пусто</div>`;
+}
+
 // --- КРАШ ---
 let crashInterval = null, currentCrashPoint = 0, currentCrashMultiplier = 1.00, isCrashed = false;
-
 window.startCrash = function() {
   const bet = Number($("crash-bet").value);
   if (bet < 1) return toast("Введите сумму");
   if (crashInterval) return;
-  
   $("crash-start-btn").disabled = true; $("crash-cashout-btn").disabled = false;
   $("crash-status").textContent = "ИГРА ИДЕТ..."; $("crash-status").style.color = "#55ff00";
   $("crash-line").style.height = "0%"; currentCrashMultiplier = 1.00; isCrashed = false;
-  
   const rand = Math.random();
   if (rand < 0.5) currentCrashPoint = 1 + Math.random() * 0.5;
   else currentCrashPoint = 1.5 + Math.random() * 10;
@@ -90,19 +94,17 @@ window.startCrash = function() {
     if (currentCrashMultiplier >= currentCrashPoint) crashEnd();
   }, 100);
 }
-
 window.cashoutCrash = async function() {
   if (isCrashed || currentCrashMultiplier <= 1.00) return;
   isCrashed = true; clearInterval(crashInterval); crashInterval = null;
   const bet = Number($("crash-bet").value);
   try {
     const res = await api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: currentCrashMultiplier }) });
-    toast(`Вы забрали на ${currentCrashMultiplier.toFixed(2)}x! Выигрыш: ${res.win_amount} PTS`);
+    toast(`Забрано на ${currentCrashMultiplier.toFixed(2)}x! Выигрыш: ${res.win_amount} PTS`);
     $("crash-status").textContent = `Забрано на ${currentCrashMultiplier.toFixed(2)}x`; $("crash-status").style.color = "#55ff00";
   } catch(e) { toast(e.message); }
   resetCrashButtons(); await loadMe();
 }
-
 function crashEnd() {
   isCrashed = true; clearInterval(crashInterval); crashInterval = null;
   $("crash-mult").textContent = currentCrashPoint.toFixed(2) + "x";
@@ -113,56 +115,9 @@ function crashEnd() {
   setTimeout(() => { $("crash-line").style.background = "linear-gradient(to right, rgba(85,255,0,0.2), #55ff00)"; }, 2000);
   resetCrashButtons(); loadMe();
 }
-
 function resetCrashButtons() { $("crash-start-btn").disabled = false; $("crash-cashout-btn").disabled = true; }
 
-// --- АДМИНКА ---
-$("admin-points-form")?.addEventListener("submit", async e => {
-  e.preventDefault();
-  try {
-    const res = await api("/api/admin/give-points", {
-      method: "POST",
-      body: JSON.stringify({ target: $("admin-target").value, amount: Number($("admin-points-amount").value), action: $("admin-points-action").value })
-    });
-    toast(res.message); $("admin-points-form").reset();
-  } catch(e) { toast(e.message); }
-});
-
-$("admin-event-form")?.addEventListener("submit", async e => {
-  e.preventDefault();
-  try {
-    await api("/api/admin/create-event", {
-      method: "POST",
-      body: JSON.stringify({
-        sport: $("admin-sport").value, title: $("admin-title").value,
-        o1: Number($("admin-o1").value), ox: $("admin-ox").value ? Number($("admin-ox").value) : null,
-        o2: Number($("admin-o2").value)
-      })
-    });
-    toast("Матч добавлен!"); $("admin-event-form").reset(); await loadEvents(); loadSettle();
-  } catch(e) { toast(e.message); }
-});
-
-async function loadSettle() {
-  const open = events.filter(e=>e.status==="open");
-  $("settle-list").innerHTML = open.map(e=>`
-    <div class="settle" style="margin-bottom: 10px; background: #1a1a1a; padding: 10px; border-radius: 6px;">
-      <div style="font-size: 14px; margin-bottom: 5px;">${e.title}</div>
-      <div style="display: flex; gap: 5px;">
-        <button onclick="settle(${e.id}, '1')">П1</button>
-        <button onclick="settle(${e.id}, 'X')">X</button>
-        <button onclick="settle(${e.id}, '2')">П2</button>
-      </div>
-    </div>
-  `).join("") || "Нет матчей";
-}
-
-window.settle = async function(id, result) {
-  if (!confirm("Рассчитать матч?")) return;
-  try { await api(`/api/admin/settle/${id}`, { method: "POST", body: JSON.stringify({ result }) }); toast("Рассчитано!"); await loadEvents(); loadSettle(); } 
-  catch(e) { toast(e.message); }
-}
-
+// --- КЕЙСЫ И АПГРЕЙД ---
 async function loadCases() {
   const cases = await api("/api/cases");
   $("cases-list").innerHTML = cases.map(c => `
@@ -174,22 +129,135 @@ async function loadCases() {
     </div>
   `).join("");
 }
-
 window.openCase = async function(id) {
   try {
     const data = await api("/api/cases/open", { method: "POST", body: JSON.stringify({ case_id: id }) });
     $("case-result-text").style.display = "block";
     $("case-result-text").innerHTML = `<h3>Вам выпал: ${data.skin.name}</h3><img src="${data.skin.image_url}" style="width: 100px;">`;
-    await loadMe();
+    await loadMe(); await loadInventory();
   } catch(e) { toast(e.message); }
+}
+
+let currentUpgradeInvId = null, currentUpgradeChance = 20;
+async function loadInventory() {
+  const items = await api("/api/inventory");
+  $("inventory-list").innerHTML = items.map(i => `
+    <div style="display: flex; flex-direction: column; gap: 10px; background: #1a1a1a; padding: 10px; border-radius: 8px; border: 1px solid #333;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <img src="${i.image_url}" style="width: 50px; height: 50px;">
+        <div style="flex: 1; font-size: 12px;"><div style="font-weight: bold;">${i.name}</div><div style="color: #55ff00;">${i.price} PTS</div></div>
+      </div>
+      <div style="display: flex; gap: 5px;">
+        <button onclick="selectUpgradeSkin(${i.inv_id}, '${i.image_url}')" style="flex: 1; background: #ffaa00; border: none; padding: 6px; border-radius: 4px; font-weight: bold; font-size: 12px;">Апгрейд</button>
+        <button onclick="sellSkin(${i.inv_id}, '${i.name}')" style="flex: 1; background: #f87171; border: none; padding: 6px; border-radius: 4px; font-weight: bold; color: #fff; font-size: 12px;">Продать</button>
+      </div>
+    </div>
+  `).join("") || `<div class="empty">Нет скинов</div>`;
+}
+window.sellSkin = async function(invId, name) {
+  if (!confirm(`Продать ${name}?`)) return;
+  try { const d = await api("/api/inventory/sell", { method: "POST", body: JSON.stringify({ inv_id: invId }) }); toast(d.message); await loadMe(); await loadInventory(); } catch(e) { toast(e.message); }
+}
+window.selectUpgradeSkin = function(invId, imgUrl) {
+  currentUpgradeInvId = invId;
+  $("upgrade-interface").style.display = "block";
+  $("upgrade-img-left").src = imgUrl;
+  $("upgrade-result-text").innerHTML = "";
+  $("upgrade-img-right").src = "https://i.imgur.com/rQAXrZd.png"; 
+}
+window.setChance = function(chance) {
+  currentUpgradeChance = chance;
+  document.querySelectorAll(".chance-btn").forEach(b => { b.style.background = "#333"; b.style.color = "#fff"; });
+  event.target.style.background = "#55ff00"; event.target.style.color = "#000";
+}
+$("btn-do-upgrade").addEventListener("click", async () => {
+  if (!currentUpgradeInvId) return toast("Выберите скин");
+  $("upgrade-result-text").innerHTML = "Крутим...";
+  try {
+    const data = await api("/api/upgrade", { method: "POST", body: JSON.stringify({ inv_id: currentUpgradeInvId, chance: currentUpgradeChance }) });
+    if (data.success) {
+      $("upgrade-result-text").innerHTML = `<h3 style="color: #55ff00;">УСПЕХ! Вы получили ${data.target_skin.name}</h3>`;
+    } else {
+      $("upgrade-result-text").innerHTML = `<h3 style="color: #f87171;">НЕУДАЧА. Скин сгорел.</h3>`;
+    }
+    $("upgrade-interface").style.display = "none";
+    await loadInventory();
+  } catch(e) { toast(e.message); $("upgrade-result-text").innerHTML = ""; }
+});
+
+// --- АДМИНКА ---
+async function loadAdminUsers() {
+  if (!me?.is_admin) return;
+  const userSelect = $("drop-user-id"), settingsUserSelect = $("settings-user-id");
+  try {
+    const users = await api("/api/admin/users");
+    const options = `<option value="" disabled selected>Выберите игрока...</option>` + users.map(u => `<option value="${u.user_id}">${u.first_name || "Без имени"} (@${u.username || u.user_id})</option>`).join("");
+    if (userSelect) userSelect.innerHTML = options;
+    if (settingsUserSelect) settingsUserSelect.innerHTML = options;
+  } catch(e) {}
+  
+  const skinSelect = $("force-skin-select");
+  if (skinSelect) {
+    try {
+      const skins = await api("/api/admin/all-skins");
+      skinSelect.innerHTML = `<option value="">Случайный скин</option>` + skins.map(s => `<option value="${s.id}">${s.name} — ${s.price} PTS</option>`).join("");
+    } catch(e) {}
+  }
+}
+
+$("admin-points-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const res = await api("/api/admin/give-points", { method: "POST", body: JSON.stringify({ target: $("admin-target").value, amount: Number($("admin-points-amount").value), action: $("admin-points-action").value }) });
+    toast(res.message); $("admin-points-form").reset();
+  } catch(e) { toast(e.message); }
+});
+
+$("admin-dropdown-points")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const res = await api("/api/admin/give-points", { method: "POST", body: JSON.stringify({ target: $("drop-user-id").value, amount: Number($("drop-points-amount").value), action: $("drop-points-action").value }) });
+    toast(res.message); await loadAdminUsers();
+  } catch(e) { toast(e.message); }
+});
+
+$("user-settings-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const data = await api("/api/admin/user-settings", { method: "POST", body: JSON.stringify({ user_id: Number($("settings-user-id").value), forced_skin_id: $("force-skin-select").value, custom_chance: Number($("custom-chance").value) }) });
+    toast(data.message);
+  } catch(err) { toast(err.message); }
+});
+
+$("admin-event-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    await api("/api/admin/create-event", { method: "POST", body: JSON.stringify({ sport: $("admin-sport").value, title: $("admin-title").value, o1: Number($("admin-o1").value), ox: $("admin-ox").value ? Number($("admin-ox").value) : null, o2: Number($("admin-o2").value) }) });
+    toast("Матч добавлен!"); $("admin-event-form").reset(); await loadEvents(); loadSettle();
+  } catch(e) { toast(e.message); }
+});
+
+async function loadSettle() {
+  const open = events.filter(e=>e.status==="open");
+  $("settle-list").innerHTML = open.map(e=>`
+    <div class="settle" style="margin-bottom: 10px; background: #1a1a1a; padding: 10px; border-radius: 6px;">
+      <div style="font-size: 14px; margin-bottom: 5px;">${e.title}</div>
+      <div style="display: flex; gap: 5px;"><button onclick="settle(${e.id}, '1')">П1</button><button onclick="settle(${e.id}, 'X')">X</button><button onclick="settle(${e.id}, '2')">П2</button></div>
+    </div>
+  `).join("") || "Нет матчей";
+}
+window.settle = async function(id, result) {
+  if (!confirm("Рассчитать матч?")) return;
+  try { await api(`/api/admin/settle/${id}`, { method: "POST", body: JSON.stringify({ result }) }); toast("Рассчитано!"); await loadEvents(); loadSettle(); } catch(e) { toast(e.message); }
 }
 
 document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click", async ()=>{
   document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===btn));
   document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("hidden",p.id!==btn.dataset.tab));
   if(btn.dataset.tab==="history") await loadHistory();
-  if(btn.dataset.tab==="admin") { await loadEvents(); loadSettle(); }
-  if(btn.dataset.tab==="cases") await loadCases();
+  if(btn.dataset.tab==="rating") await loadRating();
+  if(btn.dataset.tab==="admin") { await loadAdminUsers(); await loadEvents(); loadSettle(); }
+  if(btn.dataset.tab==="cases") { await loadCases(); await loadInventory(); }
 }));
 
 (async()=>{
