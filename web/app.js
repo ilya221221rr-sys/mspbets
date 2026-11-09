@@ -94,21 +94,33 @@ async function loadRating() {
 
 async function loadAdminUsers() {
   if (!me?.is_admin) return;
+  
   const userSelect = $("give-user-id");
-  if (!userSelect) return;
-  try {
-    const users = await api("/api/admin/users");
-    if (users.length === 0) {
-       userSelect.innerHTML = `<option value="" disabled selected>Нет игроков</option>`;
-       return;
-    }
-    userSelect.innerHTML = `<option value="" disabled selected>Выберите игрока...</option>` + 
-      users.map(u => {
-        const name = u.first_name || "Без имени";
-        const uname = u.username ? `(@${u.username})` : `(ID: ${u.user_id})`;
-        return `<option value="${u.user_id}">${escapeHtml(name)} ${escapeHtml(uname)} — ${u.balance} PTS</option>`;
-      }).join("");
-  } catch(e) { console.error(e); }
+  const skinUserSelect = $("skin-user-id");
+  
+  if (userSelect || skinUserSelect) {
+    try {
+      const users = await api("/api/admin/users");
+      const userOptions = `<option value="" disabled selected>Выберите игрока...</option>` + 
+        users.map(u => {
+          const name = u.first_name || "Без имени";
+          const uname = u.username ? `(@${u.username})` : `(ID: ${u.user_id})`;
+          return `<option value="${u.user_id}">${escapeHtml(name)} ${escapeHtml(uname)}</option>`;
+        }).join("");
+        
+      if (userSelect) userSelect.innerHTML = userOptions;
+      if (skinUserSelect) skinUserSelect.innerHTML = userOptions;
+    } catch(e) { console.error(e); }
+  }
+
+  const skinSelect = $("skin-select");
+  if (skinSelect) {
+    try {
+      const skins = await api("/api/admin/all-skins");
+      skinSelect.innerHTML = `<option value="" disabled selected>Выберите скин...</option>` + 
+        skins.map(s => `<option value="${s.id}">${escapeHtml(s.name)} — ${s.price} PTS</option>`).join("");
+    } catch(e) { console.error(e); }
+  }
 }
 
 function renderSettle() {
@@ -215,6 +227,24 @@ $("create-promo")?.addEventListener("submit", async e => {
   } catch (err) { toast(err.message); }
 });
 
+$("give-skin-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const data = await api("/api/admin/give-skin", {
+      method: "POST",
+      body: JSON.stringify({
+        user_id: Number($("skin-user-id").value),
+        skin_id: Number($("skin-select").value),
+        force_next: $("force-next-case").checked
+      })
+    });
+    $("give-skin-form").reset();
+    toast(data.message || "Скин выдан!");
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
 $("btn-promo").addEventListener("click", async () => {
   const code = prompt("Введите ваш промокод:");
   if (!code) return;
@@ -300,9 +330,8 @@ window.openCase = async function(caseId) {
   }
 }
 
-// --- ИНВЕНТАРЬ, ПРОДАЖА И АПГРЕЙД ---
 let currentUpgradeInvId = null;
-let currentUpgradeChance = 20; // По умолчанию 20% (x5)
+let currentUpgradeChance = 20; 
 
 async function loadInventory() {
   const items = await api("/api/inventory");
