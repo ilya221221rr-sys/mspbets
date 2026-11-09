@@ -66,7 +66,6 @@ async def init_db():
             user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT,
             balance INTEGER NOT NULL DEFAULT 1000, created_at TEXT NOT NULL
         )""")
-        # ОБНОВЛЕННАЯ ТАБЛИЦА СОБЫТИЙ
         await db.execute("""CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT, sport TEXT NOT NULL,
             title TEXT NOT NULL, starts_at TEXT, status TEXT NOT NULL DEFAULT 'open',
@@ -193,7 +192,6 @@ async def predict(request: Request):
             await db.rollback()
             raise HTTPException(400, "Приём прогнозов закрыт")
             
-        # ПРОВЕРКА ИСХОДОВ ПО ВИДУ СПОРТА
         sport = event[0]
         allowed = {"1", "2"} if sport in ("CS2", "Dota 2", "Теннис") else {"1", "X", "2"}
         if choice not in allowed:
@@ -249,7 +247,35 @@ async def create_event(request: Request):
         await db.commit()
     return {"ok": True}
 
-# НОВЫЙ ЭНДПОИНТ ДЛЯ НАЧИСЛЕНИЯ БАЛЛОВ
+@app.post("/api/admin/events/{event_id}/update-odds")
+async def update_odds(event_id: int, request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    if uid not in ADMIN_IDS:
+        raise HTTPException(403, "Нет доступа")
+        
+    body = await request.json()
+    try:
+        o1 = float(body.get("odds_1"))
+        o2 = float(body.get("odds_2"))
+        ox_raw = body.get("odds_x")
+        ox = float(ox_raw) if ox_raw is not None else None
+    except Exception:
+        raise HTTPException(400, "Ошибка в коэффициентах")
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute("SELECT status FROM events WHERE id=?", (event_id,))
+        event = await cur.fetchone()
+        if not event or event[0] != "open":
+            raise HTTPException(400, "Можно менять кэфы только у открытых матчей")
+            
+        await db.execute(
+            "UPDATE events SET odds_1=?, odds_x=?, odds_2=? WHERE id=?",
+            (o1, ox, o2, event_id)
+        )
+        await db.commit()
+    return {"ok": True, "message": "Коэффициенты обновлены"}
+
 @app.post("/api/admin/give-points")
 async def give_points(request: Request):
     user = await current_user(request)
@@ -299,7 +325,6 @@ async def settle_event(event_id: int, request: Request):
         predictions = await cur.fetchall()
         
         for p in predictions:
-            # ВЫПЛАТА ПО КОЭФФИЦИЕНТУ ИСХОДА
             odds_map = {"1": event["odds_1"], "X": event["odds_x"], "2": event["odds_2"]}
             odds = odds_map.get(p["choice"])
             
