@@ -95,9 +95,11 @@ async def init_db():
             skin_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'owned',
             created_at TEXT NOT NULL
         )""")
-        # ТАБЛИЦА ДЛЯ ПОДКРУТКИ ДРОПА
-        await db.execute("""CREATE TABLE IF NOT EXISTS forced_drops (
-            user_id INTEGER PRIMARY KEY, skin_id INTEGER NOT NULL
+        # ТАБЛИЦА ДЛЯ ПЕРСОНАЛЬНЫХ НАСТРОЕК ИГРОКОВ
+        await db.execute("""CREATE TABLE IF NOT EXISTS user_settings (
+            user_id INTEGER PRIMARY KEY,
+            forced_skin_id INTEGER,
+            custom_upgrade_chance INTEGER DEFAULT 10
         )""")
         await db.commit()
         
@@ -325,15 +327,16 @@ async def open_case(request: Request):
         if not row or row["balance"] < case["price"]:
             await db.rollback(); raise HTTPException(400, "Недостаточно баллов")
             
-        # ПРОВЕРКА ПОДКРУТКИ
-        cur = await db.execute("SELECT skin_id FROM forced_drops WHERE user_id=?", (uid,))
-        forced = await cur.fetchone()
+        # ПРОВЕРКА ПЕРСОНАЛЬНОЙ ПОДКРУТКИ
+        cur = await db.execute("SELECT forced_skin_id FROM user_settings WHERE user_id=?", (uid,))
+        settings = await cur.fetchone()
         
-        if forced:
-            skin_id = forced["skin_id"]
+        if settings and settings["forced_skin_id"]:
+            skin_id = settings["forced_skin_id"]
             cur = await db.execute("SELECT id, name, image_url, price FROM skins WHERE id=?", (skin_id,))
             skin = await cur.fetchone()
-            await db.execute("DELETE FROM forced_drops WHERE user_id=?", (uid,))
+            # Сбрасываем подкрутку после выдачи (чтобы не падало вечно)
+            await db.execute("UPDATE user_settings SET forced_skin_id=NULL WHERE user_id=?", (uid,))
         else:
             roll = random.randint(1, 100)
             if roll <= 60: rarity = "Common"
@@ -397,11 +400,14 @@ async def upgrade_skin(request: Request):
     inv_id = int(body.get("inv_id", 0))
     chosen_chance = float(body.get("chance", 20)) 
     
-    real_chance = 10.0 
-    
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("BEGIN IMMEDIATE")
         db.row_factory = aiosqlite.Row
+        
+        # ПОЛУЧАЕМ ИНДИВИДУАЛЬНЫЙ ШАНС ИГРОКА
+        cur = await db.execute("SELECT custom_upgrade_chance FROM user_settings WHERE user_id=?", (uid,))
+        settings = await cur.fetchone()
+        real_chance = settings["custom_upgrade_chance"] if settings and settings["custom_upgrade_chance"] else 10.0
         
         cur = await db.execute("""
             SELECT s.id as skin_id, s.price, s.name, s.image_url, s.rarity
@@ -494,6 +500,42 @@ async def admin_users(request: Request):
         cur = await db.execute("SELECT user_id, first_name, username, balance FROM users ORDER BY created_at DESC LIMIT 100")
         return [dict(r) for r in await cur.fetchall()]
 
+@app.get("/api/admin/all-skins")
+async def admin_all_skins(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    if uid not in ADMIN_IDS: raise HTTPException(403, "Нет доступа")
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT id, name, price FROM skins ORDER BY price DESC")
+        return [dict(r) for r in await cur.fetchall()]
+
+# НОВЫЙ ЭНДПОИНТ ДЛЯ НАСТРОЙКИ ИГРОКА
+@app.post("/api/admin/user-settings")
+async def admin_user_settings(request: Request):
+    user = await current_user(request)
+    uid = await ensure_user(user)
+    if uid not in ADMIN_IDS: raise HTTPException(403, "Нет доступа")
+    
+    body = await request.json()
+    target_id = int(body.get("user_id", 0))
+    forced_skin_id = body.get("forced_skin_id")
+    custom_chance = int(body.get("custom_chance", 10))
+    
+    if forced_skin_id == "": forced_skin_id = None
+    if forced_skin_id: forced_skin_id = int(forced_skin_id)
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO user_settings (user_id, custom_upgrade_chance) VALUES (?, 10)", (target_id,))
+        await db.execute("""
+            UPDATE user_settings 
+            SET forced_skin_id=?, custom_upgrade_chance=? 
+            WHERE user_id=?
+        """, (forced_skin_id, custom_chance, target_id))
+        await db.commit()
+        
+    return {"ok": True, "message": "Настройки игрока обновлены!"}
+
 @app.post("/api/admin/give-points")
 async def give_points(request: Request):
     user = await current_user(request)
@@ -545,41 +587,6 @@ async def create_promo(request: Request):
         except aiosqlite.IntegrityError:
             raise HTTPException(400, "Промокод с таким названием уже существует")
     return {"ok": True, "message": f"Промокод {code} на {reward} баллов создан!"}
-
-# НОВЫЕ ЭНДПОИНТЫ ДЛЯ УПРАВЛЕНИЯ СКИНАМИ
-@app.get("/api/admin/all-skins")
-async def admin_all_skins(request: Request):
-    user = await current_user(request)
-    uid = await ensure_user(user)
-    if uid not in ADMIN_IDS: raise HTTPException(403, "Нет доступа")
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT id, name, price FROM skins ORDER BY price DESC")
-        return [dict(r) for r in await cur.fetchall()]
-
-@app.post("/api/admin/give-skin")
-async def admin_give_skin(request: Request):
-    user = await current_user(request)
-    uid = await ensure_user(user)
-    if uid not in ADMIN_IDS: raise HTTPException(403, "Нет доступа")
-    
-    body = await request.json()
-    target_id = int(body.get("user_id", 0))
-    skin_id = int(body.get("skin_id", 0))
-    force_next = bool(body.get("force_next", False))
-    
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("BEGIN IMMEDIATE")
-        
-        await db.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", 
-                         (target_id, skin_id, datetime.now(timezone.utc).isoformat()))
-        
-        if force_next:
-            await db.execute("INSERT OR REPLACE INTO forced_drops(user_id, skin_id) VALUES(?, ?)", (target_id, skin_id))
-            
-        await db.commit()
-        
-    return {"ok": True, "message": "Скин выдан!"}
 
 @app.post("/api/admin/events/{event_id}/settle")
 async def settle_event(event_id: int, request: Request):
