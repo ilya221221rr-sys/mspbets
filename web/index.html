@@ -17,7 +17,10 @@
   <div class="glow"></div>
   <header>
     <div class="brand">MSP<span>BETS</span></div>
-    <div class="balance"><small>БАЛАНС</small><b id="balance">—</b> <span>PTS</span></div>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <button id="btn-promo" style="background: #1a1a1a; color: #55ff00; border: 1px solid #55ff00; padding: 6px 10px; border-radius: 6px; font-size: 12px;">🎁 Промо</button>
+      <div class="balance"><small>БАЛАНС</small><b id="balance">—</b> <span>PTS</span></div>
+    </div>
   </header>
   <main>
     <section class="hero"><h1>ТВОЯ ИГРА.<br><span>ТВОИ БАЛЛЫ.</span></h1></section>
@@ -128,6 +131,13 @@
           <input id="admin-o2" type="number" step="0.01" placeholder="Кф. П2" required style="flex:1;">
         </div>
         <button class="primary" type="submit">Добавить</button>
+      </form>
+
+      <div class="section-title sub">ПРОМОКОДЫ</div>
+      <form id="admin-promo-form" class="admin-form" style="margin-bottom: 24px;">
+        <input id="admin-promo-code" placeholder="Код (например WELCOME)" required style="text-transform: uppercase;">
+        <input id="admin-promo-reward" type="number" min="1" placeholder="Награда в баллах" required>
+        <button class="primary" type="submit">Создать промокод</button>
       </form>
 
       <div class="section-title sub">РАСЧЁТ МАТЧЕЙ</div>
