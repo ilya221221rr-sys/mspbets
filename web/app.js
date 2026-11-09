@@ -117,7 +117,7 @@ function crashEnd() {
 }
 function resetCrashButtons() { $("crash-start-btn").disabled = false; $("crash-cashout-btn").disabled = true; }
 
-// --- КЕЙСЫ И АПГРЕЙД ---
+// --- КЕЙСЫ С АНИМАЦИЕЙ ---
 async function loadCases() {
   const cases = await api("/api/cases");
   $("cases-list").innerHTML = cases.map(c => `
@@ -129,15 +129,71 @@ async function loadCases() {
     </div>
   `).join("");
 }
-window.openCase = async function(id) {
+
+window.openCase = async function(caseId) {
+  const strip = $("case-strip");
+  const pointer = $("case-pointer");
+  const resultText = $("case-result-text");
+  
+  resultText.style.display = "none";
+  strip.style.display = "flex";
+  pointer.style.display = "block";
+  
   try {
-    const data = await api("/api/cases/open", { method: "POST", body: JSON.stringify({ case_id: id }) });
-    $("case-result-text").style.display = "block";
-    $("case-result-text").innerHTML = `<h3>Вам выпал: ${data.skin.name}</h3><img src="${data.skin.image_url}" style="width: 100px;">`;
-    await loadMe(); await loadInventory();
-  } catch(e) { toast(e.message); }
+    const data = await api("/api/cases/open", { method: "POST", body: JSON.stringify({ case_id: caseId }) });
+    
+    const fakeSkins = [
+      "https://i.imgur.com/G7XpkYs.png", "https://i.imgur.com/0QWoP2i.png", 
+      "https://i.imgur.com/7x8YDiz.png", "https://i.imgur.com/BegS1KI.png",
+      "https://i.imgur.com/AQiM6I8.png"
+    ];
+    
+    let stripHTML = "";
+    for (let i = 0; i < 30; i++) {
+      const randomImg = fakeSkins[Math.floor(Math.random() * fakeSkins.length)];
+      stripHTML += `<img src="${randomImg}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333;">`;
+    }
+    
+    stripHTML += `<img src="${data.skin.image_url}" style="width: 80px; height: 80px; border-radius: 4px; border: 2px solid #55ff00; box-shadow: 0 0 10px #55ff00;">`;
+    
+    for (let i = 0; i < 5; i++) {
+      const randomImg = fakeSkins[Math.floor(Math.random() * fakeSkins.length)];
+      stripHTML += `<img src="${randomImg}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333;">`;
+    }
+    
+    strip.innerHTML = stripHTML;
+    strip.style.transition = "none";
+    strip.style.transform = `translateX(0)`;
+    
+    setTimeout(() => {
+      const screenWidth = window.innerWidth;
+      const targetOffset = (34 * 90) - (screenWidth / 2) + 40;
+      strip.style.transition = "transform 4s cubic-bezier(0.1, 0.7, 0.1, 1)";
+      strip.style.transform = `translateX(-${targetOffset}px)`;
+      
+      setTimeout(async () => {
+        strip.style.display = "none";
+        pointer.style.display = "none";
+        resultText.style.display = "block";
+        resultText.innerHTML = `
+          <h3 style="color: #55ff00;">Вам выпал скин!</h3>
+          <img src="${data.skin.image_url}" style="width: 120px; border-radius: 8px; margin: 10px 0;">
+          <div style="font-size: 18px; font-weight: bold;">${data.skin.name}</div>
+          <div style="color: #55ff00;">${data.skin.price} PTS</div>
+        `;
+        toast("Скин добавлен в инвентарь!");
+        await loadMe();
+        await loadInventory();
+      }, 4100);
+    }, 100);
+  } catch(e) { 
+    toast(e.message);
+    strip.style.display = "none";
+    pointer.style.display = "none";
+  }
 }
 
+// --- ИНВЕНТАРЬ, АПГРЕЙД, ПРОДАЖА ---
 let currentUpgradeInvId = null, currentUpgradeChance = 20;
 async function loadInventory() {
   const items = await api("/api/inventory");
