@@ -5,3 +5,4 @@ libsql
 requests
 beautifulsoup4
 lxml
+feedparser
