@@ -4,6 +4,7 @@ import hmac
 import hashlib
 import logging
 import random
+import asyncio
 import feedparser
 from urllib.parse import parse_qsl
 from datetime import datetime, timezone
@@ -31,6 +32,41 @@ TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
 
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) if BOT_TOKEN else None
 dp = Dispatcher()
+
+# --- РАССЫЛКА О МАТЧАХ ---
+pending_matches = []
+notify_task = None
+
+async def flush_pending_matches():
+    global pending_matches, notify_task
+    await asyncio.sleep(60) # Ждем 60 секунд
+    
+    if not pending_matches:
+        notify_task = None
+        return
+
+    text = "🔥 <b>Новые матчи в MSPBETS!</b>\n\n"
+    for m in pending_matches:
+        text += f"🏆 <b>{m['sport']}</b>\n"
+        text += f"⚔️ {m['title']}\n"
+        text += f"П1: <b>{m['o1']}</b> "
+        if m['ox']: text += f"| X: <b>{m['ox']}</b> "
+        text += f"| П2: <b>{m['o2']}</b>\n\n"
+    
+    text += f"👉 <a href='{BOT_WEBAPP_URL}'>Сделать ставку</a>"
+    pending_matches = []
+
+    conn = get_db()
+    cur = conn.execute("SELECT user_id FROM users")
+    users = cur.fetchall()
+    conn.close()
+    
+    for u in users:
+        try:
+            await bot.send_message(chat_id=u[0], text=text, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception:
+            pass
+    notify_task = None
 
 # --- ПОДКЛЮЧЕНИЕ К TURSO ---
 def get_db():
@@ -445,14 +481,28 @@ async def admin_all_skins(request: Request):
 
 @app.post("/api/admin/create-event")
 async def admin_create_event(request: Request):
+    global notify_task
     user = await current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     body = await request.json()
+    
     conn = get_db()
     conn.execute("INSERT INTO events (sport, title, odds_1, odds_x, odds_2, created_at) VALUES (?,?,?,?,?,?)",
                  (body["sport"], body["title"], body["o1"], body.get("ox"), body["o2"], datetime.now(timezone.utc).isoformat()))
     conn.commit()
     conn.close()
+    
+    pending_matches.append({
+        "sport": body["sport"],
+        "title": body["title"],
+        "o1": body["o1"],
+        "ox": body.get("ox"),
+        "o2": body["o2"]
+    })
+    
+    if notify_task is None or notify_task.done():
+        notify_task = asyncio.create_task(flush_pending_matches())
+        
     return {"ok": True}
 
 @app.post("/api/admin/settle/{event_id}")
@@ -506,7 +556,7 @@ async def activate_promo(request: Request):
     conn.close()
     return {"ok": True, "message": f"+{promo[0]} баллов!"}
 
-# --- НОВОСТИ (НОВОЕ) ---
+# --- НОВОСТИ DOTA 2 ---
 @app.get("/api/dota-news")
 async def get_dota_news(request: Request):
     await current_user(request)
