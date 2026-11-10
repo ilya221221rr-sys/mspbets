@@ -27,6 +27,16 @@
   <main>
     <section class="hero"><h1>ТВОЯ ИГРА.<br><span>ТВОИ БАЛЛЫ.</span></h1></section>
     
+    <nav style="overflow-x: auto; white-space: nowrap; display: flex; gap: 10px; padding-bottom: 5px;">
+      <button class="tab active" data-tab="matches">Матчи</button>
+      <button class="tab" data-tab="crash">Краш</button>
+      <button class="tab" data-tab="upgrader">Апгрейд</button>
+      <button class="tab" data-tab="history">История</button>
+      <button class="tab" data-tab="cases">Кейсы</button>
+      <button class="tab" data-tab="rating">Рейтинг</button>
+      <button class="tab admin-only hidden" data-tab="admin">Админка</button>
+    </nav>
+
     <section id="matches" class="panel"><div id="event-list"></div></section>
 
     <section id="crash" class="panel hidden">
@@ -64,7 +74,6 @@
       <div id="inventory-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px;"></div>
     </section>
 
-    <!-- НОВАЯ ВКЛАДКА АПГРЕЙДЕР -->
     <section id="upgrader" class="panel hidden">
       <div class="section-title" style="text-align: center;">АПГРЕЙДЕР</div>
       
@@ -126,6 +135,20 @@
         <button class="primary" type="submit">Применить</button>
       </form>
 
+      <div class="section-title sub">НАСТРОЙКИ ИГРОКА (ДРОП И АПГРЕЙД)</div>
+      <form id="user-settings-form" class="admin-form" style="margin-bottom: 24px;">
+        <select id="settings-user-id" required><option value="" disabled selected>Выберите игрока...</option></select>
+        <div style="margin-top: 10px;">
+          <label style="color: #ccc; font-size: 12px;">Скин, который выпадет в следующем кейсе:</label>
+          <select id="force-skin-select" style="width: 100%;"><option value="">Случайный скин</option></select>
+        </div>
+        <div style="margin-top: 10px;">
+          <label style="color: #ccc; font-size: 12px;">Шанс апгрейда для игрока (%):</label>
+          <input id="custom-chance" type="number" min="1" max="100" value="10" style="width: 100%;">
+        </div>
+        <button class="primary" type="submit" style="margin-top: 10px;">Сохранить настройки</button>
+      </form>
+
       <div class="section-title sub">УПРАВЛЕНИЕ КЕЙСАМИ</div>
       <form id="admin-case-form" class="admin-form" style="margin-bottom: 15px;">
         <input id="case-name" placeholder="Название кейса" required>
@@ -175,16 +198,6 @@
       <div id="settle-list"></div>
     </section>
   </main>
-  
-  <nav class="bottom-nav">
-    <button class="nav-item active" data-tab="matches">Матчи</button>
-    <button class="nav-item" data-tab="crash">Краш</button>
-    <button class="nav-item" data-tab="upgrader">Апгрейд</button>
-    <button class="nav-item" data-tab="history">История</button>
-    <button class="nav-item" data-tab="cases">Кейсы</button>
-    <button class="nav-item" data-tab="rating">Рейтинг</button>
-    <button class="nav-item admin-only hidden" data-tab="admin">Админка</button>
-  </nav>
   
   <div id="toast" class="toast hidden"></div>
   <script src="/web/app.js"></script>
