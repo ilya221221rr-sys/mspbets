@@ -250,7 +250,6 @@ window.setUpgradeChance = function(multiplier, eventObj) {
 
   const idealPrice = currentUpgradeSkinPrice * multiplier;
   
-  // Если нет скинов дороже, или пользователь хочет баланс
   if (targetSkinsList.length === 0) {
     isBalanceMode = true;
     currentTargetSkin = { id: null, price: idealPrice, image_url: "https://cdn-icons-png.flaticon.com/512/2489/2489756.png" };
@@ -473,8 +472,8 @@ window.settle = async function(id, result) {
   try { await api(`/api/admin/settle/${id}`, { method: "POST", body: JSON.stringify({ result }) }); toast("Рассчитано!"); await loadEvents(); loadSettle(); } catch(e) { toast(e.message); }
 }
 
-document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click", async ()=>{
-  document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b===btn));
+document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click", async ()=>{
+  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===btn));
   document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("hidden",p.id!==btn.dataset.tab));
   
   if(btn.dataset.tab==="history") await loadHistory();
