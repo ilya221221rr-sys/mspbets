@@ -2,6 +2,7 @@ const tg = window.Telegram?.WebApp;
 tg?.ready(); tg?.expand();
 const headers = {"Content-Type":"application/json","X-Telegram-Init-Data":tg?.initData || ""};
 let me = null, events = [];
+let prevOdds = {}; 
 const $ = id => document.getElementById(id);
 
 async function api(path, options={}) {
@@ -26,9 +27,28 @@ async function loadEvents() {
   const open = events.filter(e=>e.status==="open");
   $("event-list").innerHTML = open.map(e=>{
     const hasDraw = e.sport === "Футбол";
+    const p = prevOdds[e.id] || { o1: e.odds_1, ox: e.odds_x, o2: e.odds_2 };
+    let color1 = "", colorX = "", color2 = "";
+    if (e.odds_1 > p.o1) color1 = "color: #4ade80;"; 
+    else if (e.odds_1 < p.o1) color1 = "color: #f87171;";
+    if (e.odds_2 > p.o2) color2 = "color: #4ade80;";
+    else if (e.odds_2 < p.o2) color2 = "color: #f87171;";
+    if (hasDraw) {
+      if (e.odds_x > p.ox) colorX = "color: #4ade80;";
+      else if (e.odds_x < p.ox) colorX = "color: #f87171;";
+    }
+    prevOdds[e.id] = { o1: e.odds_1, ox: e.odds_x, o2: e.odds_2 };
+
     return `
     <article class="event" data-id="${e.id}">
-      <div class="event-top"><span>${e.sport}</span><span>Кф: ${e.odds_1} ${hasDraw ? '/ '+e.odds_x : ''} / ${e.odds_2}</span></div>
+      <div class="event-top">
+        <span>${e.sport}</span>
+        <span>Кф: 
+          <b style="${color1} transition: color 0.3s;">${e.odds_1}</b> 
+          ${hasDraw ? `/ <b style="${colorX} transition: color 0.3s;">${e.odds_x}</b> ` : ''}
+          / <b style="${color2} transition: color 0.3s;">${e.odds_2}</b>
+        </span>
+      </div>
       <h3>${e.title}</h3>
       <div class="choices">
         <button class="choice" onclick="placeBet(${e.id}, '1', ${e.odds_1})">П1 (${e.odds_1})</button>
@@ -117,7 +137,7 @@ function crashEnd() {
 }
 function resetCrashButtons() { $("crash-start-btn").disabled = false; $("crash-cashout-btn").disabled = true; }
 
-// --- КЕЙСЫ С АНИМАЦИЕЙ ---
+// --- КЕЙСЫ ---
 async function loadCases() {
   const cases = await api("/api/cases");
   $("cases-list").innerHTML = cases.map(c => `
@@ -134,33 +154,23 @@ window.openCase = async function(caseId) {
   const strip = $("case-strip");
   const pointer = $("case-pointer");
   const resultText = $("case-result-text");
-  
   resultText.style.display = "none";
   strip.style.display = "flex";
   pointer.style.display = "block";
   
   try {
     const data = await api("/api/cases/open", { method: "POST", body: JSON.stringify({ case_id: caseId }) });
-    
-    const fakeSkins = [
-      "https://i.imgur.com/G7XpkYs.png", "https://i.imgur.com/0QWoP2i.png", 
-      "https://i.imgur.com/7x8YDiz.png", "https://i.imgur.com/BegS1KI.png",
-      "https://i.imgur.com/AQiM6I8.png"
-    ];
-    
+    const fakeSkins = ["https://i.imgur.com/G7XpkYs.png", "https://i.imgur.com/0QWoP2i.png", "https://i.imgur.com/7x8YDiz.png", "https://i.imgur.com/BegS1KI.png"];
     let stripHTML = "";
     for (let i = 0; i < 30; i++) {
       const randomImg = fakeSkins[Math.floor(Math.random() * fakeSkins.length)];
       stripHTML += `<img src="${randomImg}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333;">`;
     }
-    
     stripHTML += `<img src="${data.skin.image_url}" style="width: 80px; height: 80px; border-radius: 4px; border: 2px solid #55ff00; box-shadow: 0 0 10px #55ff00;">`;
-    
     for (let i = 0; i < 5; i++) {
       const randomImg = fakeSkins[Math.floor(Math.random() * fakeSkins.length)];
       stripHTML += `<img src="${randomImg}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333;">`;
     }
-    
     strip.innerHTML = stripHTML;
     strip.style.transition = "none";
     strip.style.transform = `translateX(0)`;
@@ -175,38 +185,22 @@ window.openCase = async function(caseId) {
         strip.style.display = "none";
         pointer.style.display = "none";
         resultText.style.display = "block";
-        resultText.innerHTML = `
-          <h3 style="color: #55ff00;">Вам выпал скин!</h3>
-          <img src="${data.skin.image_url}" style="width: 120px; border-radius: 8px; margin: 10px 0;">
-          <div style="font-size: 18px; font-weight: bold;">${data.skin.name}</div>
-          <div style="color: #55ff00;">${data.skin.price} PTS</div>
-        `;
-        toast("Скин добавлен в инвентарь!");
-        await loadMe();
-        await loadInventory();
+        resultText.innerHTML = `<h3 style="color: #55ff00;">Вам выпал скин!</h3><img src="${data.skin.image_url}" style="width: 120px; margin: 10px 0;"><div style="font-weight: bold;">${data.skin.name}</div>`;
+        await loadMe(); await loadInventory();
       }, 4100);
     }, 100);
   } catch(e) { 
-    toast(e.message);
-    strip.style.display = "none";
-    pointer.style.display = "none";
+    toast(e.message); strip.style.display = "none"; pointer.style.display = "none";
   }
 }
 
-// --- ИНВЕНТАРЬ, АПГРЕЙД, ПРОДАЖА ---
-let currentUpgradeInvId = null, currentUpgradeChance = 20;
 async function loadInventory() {
   const items = await api("/api/inventory");
   $("inventory-list").innerHTML = items.map(i => `
-    <div style="display: flex; flex-direction: column; gap: 10px; background: #1a1a1a; padding: 10px; border-radius: 8px; border: 1px solid #333;">
-      <div style="display: flex; align-items: center; gap: 10px;">
-        <img src="${i.image_url}" style="width: 50px; height: 50px;">
-        <div style="flex: 1; font-size: 12px;"><div style="font-weight: bold;">${i.name}</div><div style="color: #55ff00;">${i.price} PTS</div></div>
-      </div>
-      <div style="display: flex; gap: 5px;">
-        <button onclick="selectUpgradeSkin(${i.inv_id}, '${i.image_url}')" style="flex: 1; background: #ffaa00; border: none; padding: 6px; border-radius: 4px; font-weight: bold; font-size: 12px;">Апгрейд</button>
-        <button onclick="sellSkin(${i.inv_id}, '${i.name}')" style="flex: 1; background: #f87171; border: none; padding: 6px; border-radius: 4px; font-weight: bold; color: #fff; font-size: 12px;">Продать</button>
-      </div>
+    <div style="display: flex; flex-direction: column; gap: 10px; background: #1a1a1a; padding: 10px; border-radius: 8px;">
+      <img src="${i.image_url}" style="width: 100%; border-radius: 4px;">
+      <div style="font-size: 12px;"><b>${i.name}</b><br>${i.price} PTS</div>
+      <button onclick="sellSkin(${i.inv_id}, '${i.name}')" style="background: #f87171; border: none; padding: 6px; border-radius: 4px; font-weight: bold; color: #fff; cursor: pointer;">Продать</button>
     </div>
   `).join("") || `<div class="empty">Нет скинов</div>`;
 }
@@ -214,32 +208,139 @@ window.sellSkin = async function(invId, name) {
   if (!confirm(`Продать ${name}?`)) return;
   try { const d = await api("/api/inventory/sell", { method: "POST", body: JSON.stringify({ inv_id: invId }) }); toast(d.message); await loadMe(); await loadInventory(); } catch(e) { toast(e.message); }
 }
-window.selectUpgradeSkin = function(invId, imgUrl) {
+
+// --- АПГРЕЙДЕР ---
+let currentUpgradeInvId = null;
+let currentUpgradeSkinPrice = 0;
+let wheel = null;
+let targetSkinsList = [];
+let currentTargetSkin = null;
+let isBalanceMode = false;
+
+async function loadUpgraderInventory() {
+  const items = await api("/api/inventory");
+  $("upgrader-inventory-list").innerHTML = items.map(i => `
+    <div style="display: flex; flex-direction: column; gap: 10px; background: #1a1a1a; padding: 10px; border-radius: 8px;">
+      <img src="${i.image_url}" style="width: 100%; border-radius: 4px;">
+      <div style="font-size: 12px;"><b>${i.name}</b><br>${i.price} PTS</div>
+      <button onclick="selectUpgradeSkin(${i.inv_id}, '${i.image_url}', ${i.price})" style="background: #ffaa00; border: none; padding: 6px; border-radius: 4px; font-weight: bold; cursor: pointer;">Выбрать</button>
+    </div>
+  `).join("") || `<div class="empty">Нет скинов</div>`;
+}
+
+window.selectUpgradeSkin = async function(invId, imgUrl, price) {
   currentUpgradeInvId = invId;
-  $("upgrade-interface").style.display = "block";
+  currentUpgradeSkinPrice = price;
+  const allSkins = await api("/api/admin/all-skins");
+  targetSkinsList = allSkins.filter(s => s.price > price);
+  
+  if (targetSkinsList.length === 0) toast("Нет скинов дороже. Используйте режим баланса.");
+  
   $("upgrade-img-left").src = imgUrl;
+  $("upgrade-left-price").textContent = `${price} PTS`;
+  $("upgrade-interface").style.display = "block";
   $("upgrade-result-text").innerHTML = "";
-  $("upgrade-img-right").src = "https://i.imgur.com/rQAXrZd.png"; 
+  
+  setUpgradeChance(2, document.querySelector(".chance-btn"));
 }
-window.setChance = function(chance) {
-  currentUpgradeChance = chance;
-  document.querySelectorAll(".chance-btn").forEach(b => { b.style.background = "#333"; b.style.color = "#fff"; });
-  event.target.style.background = "#55ff00"; event.target.style.color = "#000";
+
+window.setUpgradeChance = function(multiplier, eventObj) {
+  document.querySelectorAll(".chance-btn").forEach(b => { b.style.background = "#222"; b.style.color = "#55ff00"; });
+  if (eventObj && eventObj.target) { eventObj.target.style.background = "#55ff00"; eventObj.target.style.color = "#000"; }
+
+  const idealPrice = currentUpgradeSkinPrice * multiplier;
+  
+  // Если нет скинов дороже, или пользователь хочет баланс
+  if (targetSkinsList.length === 0) {
+    isBalanceMode = true;
+    currentTargetSkin = { id: null, price: idealPrice, image_url: "https://cdn-icons-png.flaticon.com/512/2489/2489756.png" };
+    $("upgrade-img-right").src = currentTargetSkin.image_url;
+    $("upgrade-right-price").textContent = `${idealPrice} PTS`;
+    $("wheel-chance-text").textContent = `${(100 / multiplier).toFixed(2)}%`;
+    createWheel(100 / multiplier);
+    return;
+  }
+
+  let closestSkin = targetSkinsList[0];
+  let minDiff = Math.abs(targetSkinsList[0].price - idealPrice);
+  for (let s of targetSkinsList) {
+    let diff = Math.abs(s.price - idealPrice);
+    if (diff < minDiff) { minDiff = diff; closestSkin = s; }
+  }
+  
+  currentTargetSkin = closestSkin;
+  isBalanceMode = false;
+  $("upgrade-img-right").src = closestSkin.image_url || "https://i.imgur.com/rQAXrZd.png";
+  $("upgrade-right-price").textContent = `${closestSkin.price} PTS`;
+  
+  let realChance = (currentUpgradeSkinPrice / closestSkin.price) * 100;
+  if (realChance > 90) realChance = 90;
+  $("wheel-chance-text").textContent = `${realChance.toFixed(2)}%`;
+  createWheel(realChance);
 }
+
+function createWheel(chance) {
+  const canvas = $("wheelCanvas");
+  if (!canvas) return;
+  wheel = new Winwheel({
+    'canvasId': 'wheelCanvas',
+    'numSegments': 2,
+    'segments': [
+      {'fillStyle': '#55ff00', 'text': ''},
+      {'fillStyle': '#222222', 'text': ''}
+    ],
+    'animation': {
+      'type': 'spinToStop', 'duration': 4, 'spins': 5, 'callbackFinished': onWheelStop
+    },
+    'pointerAngle': 180
+  });
+  wheel.segments[0].size = Math.max(10, (360 * chance / 100)); 
+  wheel.segments[1].size = 360 - wheel.segments[0].size;
+  wheel.draw();
+}
+
 $("btn-do-upgrade").addEventListener("click", async () => {
-  if (!currentUpgradeInvId) return toast("Выберите скин");
+  if (!currentUpgradeInvId || !currentTargetSkin) return toast("Выберите скин");
   $("upgrade-result-text").innerHTML = "Крутим...";
+  $("btn-do-upgrade").disabled = true;
+  
   try {
-    const data = await api("/api/upgrade", { method: "POST", body: JSON.stringify({ inv_id: currentUpgradeInvId, chance: currentUpgradeChance }) });
-    if (data.success) {
-      $("upgrade-result-text").innerHTML = `<h3 style="color: #55ff00;">УСПЕХ! Вы получили ${data.target_skin.name}</h3>`;
-    } else {
-      $("upgrade-result-text").innerHTML = `<h3 style="color: #f87171;">НЕУДАЧА. Скин сгорел.</h3>`;
-    }
-    $("upgrade-interface").style.display = "none";
-    await loadInventory();
-  } catch(e) { toast(e.message); $("upgrade-result-text").innerHTML = ""; }
+    const data = await api("/api/upgrade", { 
+      method: "POST", 
+      body: JSON.stringify({ 
+        inv_id: currentUpgradeInvId, 
+        target_skin_id: isBalanceMode ? null : currentTargetSkin.id,
+        target_price: isBalanceMode ? currentTargetSkin.price : null
+      }) 
+    });
+    
+    let stopAngle = data.success ? (wheel.segments[0].size / 2) : (wheel.segments[0].size + (wheel.segments[1].size / 2));
+    wheel.animation.stopAngle = stopAngle;
+    wheel.startAnimation();
+  } catch(e) { 
+    toast(e.message); $("btn-do-upgrade").disabled = false;
+  }
 });
+
+function onWheelStop() {
+  $("btn-do-upgrade").disabled = false;
+  const stopAngle = wheel.getRotationPosition();
+  const greenSize = wheel.segments[0].size;
+  let angle = (360 - (stopAngle % 360)) % 360;
+  let relativeAngle = (angle - 180 + 360) % 360;
+  let isGreen = relativeAngle <= greenSize;
+  
+  if (isGreen) {
+    $("upgrade-result-text").innerHTML = `<h3 style="color: #55ff00;">УСПЕХ!</h3>`;
+    toast("Апгрейд успешен!");
+  } else {
+    $("upgrade-result-text").innerHTML = `<h3 style="color: #f87171;">НЕУДАЧА. Скин сгорел.</h3>`;
+    toast("Скин сгорел");
+  }
+  loadInventory();
+  $("upgrade-interface").style.display = "none";
+}
+window.cancelUpgrade = function() { $("upgrade-interface").style.display = "none"; currentUpgradeInvId = null; }
 
 // --- АДМИНКА ---
 async function loadAdminUsers() {
@@ -261,28 +362,18 @@ async function loadAdminUsers() {
   }
 }
 
+async function loadAdminCases() {
+  const cases = await api("/api/admin/cases");
+  const select = $("skin-case-id");
+  if (select) select.innerHTML = `<option value="">Выберите кейс...</option>` + cases.map(c => `<option value="${c.id}">${c.name} (${c.price} PTS)</option>`).join("");
+}
+
 $("admin-points-form")?.addEventListener("submit", async e => {
   e.preventDefault();
   try {
     const res = await api("/api/admin/give-points", { method: "POST", body: JSON.stringify({ target: $("admin-target").value, amount: Number($("admin-points-amount").value), action: $("admin-points-action").value }) });
     toast(res.message); $("admin-points-form").reset();
   } catch(e) { toast(e.message); }
-});
-
-$("admin-dropdown-points")?.addEventListener("submit", async e => {
-  e.preventDefault();
-  try {
-    const res = await api("/api/admin/give-points", { method: "POST", body: JSON.stringify({ target: $("drop-user-id").value, amount: Number($("drop-points-amount").value), action: $("drop-points-action").value }) });
-    toast(res.message); await loadAdminUsers();
-  } catch(e) { toast(e.message); }
-});
-
-$("user-settings-form")?.addEventListener("submit", async e => {
-  e.preventDefault();
-  try {
-    const data = await api("/api/admin/user-settings", { method: "POST", body: JSON.stringify({ user_id: Number($("settings-user-id").value), forced_skin_id: $("force-skin-select").value, custom_chance: Number($("custom-chance").value) }) });
-    toast(data.message);
-  } catch(err) { toast(err.message); }
 });
 
 $("admin-event-form")?.addEventListener("submit", async e => {
@@ -301,48 +392,80 @@ $("admin-promo-form")?.addEventListener("submit", async e => {
   } catch(e) { toast(e.message); }
 });
 
+$("admin-case-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const res = await api("/api/admin/create-case", { method: "POST", body: JSON.stringify({ name: $("case-name").value, price: Number($("case-price").value), image_url: $("case-img").value }) });
+    toast(res.message); $("admin-case-form").reset(); await loadAdminCases(); await loadCases();
+  } catch(e) { toast(e.message); }
+});
+
+$("admin-skin-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const res = await api("/api/admin/add-skin", {
+      method: "POST",
+      body: JSON.stringify({
+        case_id: Number($("skin-case-id").value), name: $("skin-name").value,
+        price: Number($("skin-price").value), image_url: $("skin-img").value,
+        rarity: $("skin-rarity").value, chance: Number($("skin-chance").value)
+      })
+    });
+    toast(res.message); $("admin-skin-form").reset();
+    if ($("skin-case-id").value) loadCaseSkins($("skin-case-id").value);
+  } catch(e) { toast(e.message); }
+});
+
+async function loadCaseSkins(caseId) {
+  const skins = await api(`/api/admin/case-skins/${caseId}`);
+  $("admin-skins-list").innerHTML = skins.map(s => `
+    <div style="display: flex; justify-content: space-between; align-items: center; background: #1a1a1a; padding: 8px; margin-bottom: 5px; border-radius: 4px;">
+      <span>${s.name} (${s.chance}%)</span>
+      <button onclick="deleteSkin(${s.id})" style="background: #f87171; border: none; padding: 4px 8px; border-radius: 4px; color: white; cursor: pointer;">Удалить</button>
+    </div>
+  `).join("");
+}
+window.deleteSkin = async function(skinId) {
+  if (!confirm("Удалить этот скин?")) return;
+  try { await api(`/api/admin/delete-skin/${skinId}`, { method: "POST" }); toast("Скин удален"); if ($("skin-case-id").value) loadCaseSkins($("skin-case-id").value); } catch(e) { toast(e.message); }
+}
+$("skin-case-id")?.addEventListener("change", (e) => { if (e.target.value) loadCaseSkins(e.target.value); });
+
 $("btn-promo")?.addEventListener("click", async () => {
   const code = prompt("Введите промокод:");
   if (!code) return;
-  try {
-    const res = await api("/api/promo/activate", { method: "POST", body: JSON.stringify({ code }) });
-    toast(res.message); await loadMe();
-  } catch(e) { toast(e.message); }
+  try { const res = await api("/api/promo/activate", { method: "POST", body: JSON.stringify({ code }) }); toast(res.message); await loadMe(); } catch(e) { toast(e.message); }
 });
 
 async function loadSettle() {
   const open = events.filter(e=>e.status==="open");
   $("settle-list").innerHTML = open.map(e=>`
     <div class="settle" style="margin-bottom: 10px; background: #1a1a1a; padding: 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 5px;">
-      <div style="font-size: 14px;">${e.title}</div>
-      <div style="font-size: 12px; color: #aaa;">Текущие Кф: ${e.odds_1} / ${e.odds_x || '-'} / ${e.odds_2}</div>
-      <div style="display: flex; gap: 5px;">
-        <button onclick="updateOdds(${e.id}, ${e.odds_1}, ${e.odds_x || 'null'}, ${e.odds_2})" style="background: #ffaa00; color: #000; border: none; padding: 4px 8px; border-radius: 4px;">✏️ Изменить Кф</button>
+      <div style="font-size: 14px; font-weight: bold;">${e.title}</div>
+      <div style="display: flex; gap: 5px; align-items: center; margin-top: 5px;">
+        <span style="font-size: 12px; color: #aaa;">П1:</span><input type="number" step="0.01" value="${e.odds_1}" onchange="quickUpdateOdds(${e.id}, this.value, null, null)" style="width: 60px; padding: 4px; background: #111; border: 1px solid #333; color: #fff; border-radius: 4px;">
+        <span style="font-size: 12px; color: #aaa;">X:</span><input type="number" step="0.01" value="${e.odds_x || ''}" onchange="quickUpdateOdds(${e.id}, null, this.value, null)" style="width: 60px; padding: 4px; background: #111; border: 1px solid #333; color: #fff; border-radius: 4px;">
+        <span style="font-size: 12px; color: #aaa;">П2:</span><input type="number" step="0.01" value="${e.odds_2}" onchange="quickUpdateOdds(${e.id}, null, null, this.value)" style="width: 60px; padding: 4px; background: #111; border: 1px solid #333; color: #fff; border-radius: 4px;">
       </div>
       <div style="display: flex; gap: 5px; margin-top: 5px;">
-        <button onclick="settle(${e.id}, '1')">П1</button>
-        <button onclick="settle(${e.id}, 'X')">X</button>
-        <button onclick="settle(${e.id}, '2')">П2</button>
+        <button onclick="settle(${e.id}, '1')">П1</button><button onclick="settle(${e.id}, 'X')">X</button><button onclick="settle(${e.id}, '2')">П2</button>
       </div>
     </div>
   `).join("") || "Нет матчей";
 }
 
-window.updateOdds = async function(id, o1, ox, o2) {
-  const n1 = prompt("Новый коэффициент на П1:", o1);
-  if (n1 === null) return;
-  const nx = prompt("Новый коэффициент на X (оставьте пустым, если нет):", ox || "");
-  if (nx === null) return;
-  const n2 = prompt("Новый коэффициент на П2:", o2);
-  if (n2 === null) return;
-  
+window.quickUpdateOdds = async function(eventId, o1, ox, o2) {
+  const event = events.find(e => e.id === eventId);
+  if (!event) return;
+  const newO1 = o1 !== null ? Number(o1) : event.odds_1;
+  const newOx = ox !== null ? (ox === "" ? null : Number(ox)) : event.odds_x;
+  const newO2 = o2 !== null ? Number(o2) : event.odds_2;
+  if (!newO1 || !newO2) { toast("П1 и П2 не могут быть пустыми"); await loadEvents(); loadSettle(); return; }
   try {
-    await api(`/api/admin/update-odds/${id}`, {
-      method: "POST",
-      body: JSON.stringify({ o1: Number(n1), ox: nx ? Number(nx) : null, o2: Number(n2) })
-    });
-    toast("Кэфы обновлены!"); await loadEvents(); loadSettle();
-  } catch(e) { toast(e.message); }
+    await api(`/api/admin/update-odds/${eventId}`, { method: "POST", body: JSON.stringify({ o1: newO1, ox: newOx, o2: newO2 }) });
+    toast("Кэф изменен");
+    event.odds_1 = newO1; event.odds_x = newOx; event.odds_2 = newO2;
+  } catch(e) { toast(e.message); await loadEvents(); loadSettle(); }
 }
 
 window.settle = async function(id, result) {
@@ -350,16 +473,32 @@ window.settle = async function(id, result) {
   try { await api(`/api/admin/settle/${id}`, { method: "POST", body: JSON.stringify({ result }) }); toast("Рассчитано!"); await loadEvents(); loadSettle(); } catch(e) { toast(e.message); }
 }
 
-document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click", async ()=>{
-  document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===btn));
+document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click", async ()=>{
+  document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b===btn));
   document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("hidden",p.id!==btn.dataset.tab));
+  
   if(btn.dataset.tab==="history") await loadHistory();
   if(btn.dataset.tab==="rating") await loadRating();
-  if(btn.dataset.tab==="admin") { await loadAdminUsers(); await loadEvents(); loadSettle(); }
+  if(btn.dataset.tab==="admin") { await loadAdminUsers(); await loadAdminCases(); await loadEvents(); loadSettle(); }
   if(btn.dataset.tab==="cases") { await loadCases(); await loadInventory(); }
+  if(btn.dataset.tab==="upgrader") { await loadUpgraderInventory(); }
 }));
 
+async function refresh(){await loadMe();await loadEvents()}
+
 (async()=>{
-  try { await loadMe(); await loadEvents(); } 
+  try { await refresh(); } 
   catch(e) { $("event-list").innerHTML = `<div class="empty">${e.message}</div>`; }
 })();
+
+setInterval(async () => {
+  if (document.getElementById("matches").classList.contains("hidden") === false) {
+    try {
+      const newEvents = await api("/api/events");
+      if (JSON.stringify(newEvents) !== JSON.stringify(events)) {
+        events = newEvents;
+        loadEvents();
+      }
+    } catch(e) {}
+  }
+}, 15000);
