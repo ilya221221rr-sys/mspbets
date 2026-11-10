@@ -25,17 +25,20 @@ BOT_WEBAPP_URL = os.getenv("BOT_WEBAPP_URL", "").rstrip("/")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 ADMIN_IDS = {int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()}
 
+# --- НАСТРОЙКИ TURSO ---
 TURSO_URL = os.getenv("TURSO_DATABASE_URL", "")
 TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
 
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) if BOT_TOKEN else None
 dp = Dispatcher()
 
+# --- ПОДКЛЮЧЕНИЕ К TURSO ---
 def get_db():
     if not TURSO_URL or not TURSO_TOKEN:
         raise Exception("Не заданы TURSO_DATABASE_URL или TURSO_AUTH_TOKEN")
     return libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
 
+# --- АВТОРИЗАЦИЯ ---
 def validate_init_data(init_data: str):
     if not BOT_TOKEN or not init_data: return None
     try:
@@ -58,16 +61,28 @@ async def current_user(request: Request):
     if user: return user
     raise HTTPException(status_code=401, detail="Откройте через Telegram")
 
+# --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ---
 def init_db():
     conn = get_db()
-    conn.execute("""CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, balance INTEGER NOT NULL DEFAULT 1000, created_at TEXT NOT NULL)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, sport TEXT NOT NULL, title TEXT NOT NULL, starts_at TEXT, status TEXT NOT NULL DEFAULT 'open', result TEXT, odds_1 REAL NOT NULL DEFAULT 2.0, odds_x REAL, odds_2 REAL NOT NULL DEFAULT 2.0, created_at TEXT NOT NULL)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS predictions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, event_id INTEGER NOT NULL, choice TEXT NOT NULL, points INTEGER NOT NULL, locked_odds REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT,
+        balance INTEGER NOT NULL DEFAULT 1000, created_at TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, sport TEXT NOT NULL,
+        title TEXT NOT NULL, starts_at TEXT, status TEXT NOT NULL DEFAULT 'open',
+        result TEXT, odds_1 REAL NOT NULL DEFAULT 2.0, odds_x REAL, odds_2 REAL NOT NULL DEFAULT 2.0,
+        created_at TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+        event_id INTEGER NOT NULL, choice TEXT NOT NULL, points INTEGER NOT NULL,
+        locked_odds REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
+    )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS promo_codes (code TEXT PRIMARY KEY, reward INTEGER NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS promo_uses (user_id INTEGER NOT NULL, code TEXT NOT NULL, PRIMARY KEY (user_id, code))""")
     conn.execute("""CREATE TABLE IF NOT EXISTS cases (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, price INTEGER NOT NULL, image_url TEXT NOT NULL)""")
-    # В таблицу скинов добавлено поле chance для процентов
-    conn.execute("""CREATE TABLE IF NOT EXISTS skins (id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER, name TEXT NOT NULL, rarity TEXT NOT NULL, image_url TEXT NOT NULL, price INTEGER NOT NULL, chance INTEGER NOT NULL DEFAULT 10)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS skins (id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER, name TEXT NOT NULL, rarity TEXT NOT NULL, image_url TEXT NOT NULL, price INTEGER NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, skin_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'owned', created_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER PRIMARY KEY, forced_skin_id INTEGER, custom_upgrade_chance INTEGER DEFAULT 10)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS crash_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, bet_amount INTEGER NOT NULL, multiplier REAL NOT NULL, win_amount INTEGER NOT NULL, created_at TEXT NOT NULL)""")
@@ -85,19 +100,19 @@ def init_db():
         for c in cases_data: conn.execute("INSERT INTO cases (id, name, price, image_url) VALUES (?, ?, ?, ?)", c)
         
         skins_data = [
-            (1, "Demon Eater", "Rare", 2000, "https://i.imgur.com/BegS1KI.png", 5),
-            (1, "Fiery Soul", "Rare", 1600, "https://i.imgur.com/AQiM6I8.png", 10),
-            (1, "Kindred", "Common", 160, "https://i.imgur.com/G7XpkYs.png", 40),
-            (1, "Barding of Balaur", "Common", 180, "https://i.imgur.com/0QWoP2i.png", 25),
-            (1, "Solar Gyre", "Common", 266, "https://i.imgur.com/7x8YDiz.png", 20),
-            (2, "Demon Eater", "Rare", 2000, "https://i.imgur.com/BegS1KI.png", 40),
-            (2, "Аркана на врку", "Immortal", 14000, "https://i.imgur.com/rQAXrZd.png", 2),
-            (2, "Аркана на венгу", "Rare", 1700, "https://i.imgur.com/d7TJSbb.png", 58),
-            (3, "Аркана на тб", "Rare", 2500, "https://i.imgur.com/T9M1BIX.png", 100),
-            (4, "Аркана на врку", "Immortal", 14000, "https://i.imgur.com/rQAXrZd.png", 100),
-            (5, "Аркана на пуджа", "Common", 1600, "https://placehold.co/100x100?text=Pudge", 100)
+            (1, "Demon Eater", "Rare", 2000, "https://i.imgur.com/BegS1KI.png"),
+            (1, "Fiery Soul", "Rare", 1600, "https://i.imgur.com/AQiM6I8.png"),
+            (1, "Kindred", "Common", 160, "https://i.imgur.com/G7XpkYs.png"),
+            (1, "Barding of Balaur", "Common", 180, "https://i.imgur.com/0QWoP2i.png"),
+            (1, "Solar Gyre", "Common", 266, "https://i.imgur.com/7x8YDiz.png"),
+            (2, "Demon Eater", "Rare", 2000, "https://i.imgur.com/BegS1KI.png"),
+            (2, "Аркана на врку", "Immortal", 14000, "https://i.imgur.com/rQAXrZd.png"),
+            (2, "Аркана на венгу", "Rare", 1700, "https://i.imgur.com/d7TJSbb.png"),
+            (3, "Аркана на тб", "Rare", 2500, "https://i.imgur.com/T9M1BIX.png"),
+            (4, "Аркана на врку", "Immortal", 14000, "https://i.imgur.com/rQAXrZd.png"),
+            (5, "Аркана на пуджа", "Common", 1600, "https://placehold.co/100x100?text=Pudge")
         ]
-        for s in skins_data: conn.execute("INSERT INTO skins (case_id, name, rarity, price, image_url, chance) VALUES (?, ?, ?, ?, ?, ?)", s)
+        for s in skins_data: conn.execute("INSERT INTO skins (case_id, name, rarity, price, image_url) VALUES (?, ?, ?, ?, ?)", s)
         conn.commit()
     conn.close()
 
@@ -111,6 +126,7 @@ def ensure_user(user):
     conn.close()
     return uid
 
+# --- БОТ ---
 @dp.message()
 async def start_message(message):
     if not BOT_WEBAPP_URL: return
@@ -124,6 +140,7 @@ async def start_message(message):
     )
     await bot.set_chat_menu_button(chat_id=message.chat.id, menu_button=MenuButtonWebApp(text="Открыть MSPBETS", web_app=WebAppInfo(url=BOT_WEBAPP_URL)))
 
+# --- LIFESPAN ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -146,6 +163,7 @@ async def telegram_webhook(request: Request):
     await dp.feed_update(bot, update)
     return JSONResponse({"ok": True})
 
+# --- API ЭНДПОИНТЫ ---
 @app.get("/api/me")
 async def me(request: Request):
     user = await current_user(request)
@@ -181,16 +199,19 @@ async def predict(request: Request):
     uid = ensure_user(user)
     body = await request.json()
     event_id = int(body["event_id"]); points = int(body["points"]); choice = str(body["choice"])
+    
     conn = get_db()
     cur = conn.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
     row = cur.fetchone()
     cur = conn.execute("SELECT status, odds_1, odds_x, odds_2 FROM events WHERE id=?", (event_id,))
     event = cur.fetchone()
+    
     if not event or event[0] != "open": raise HTTPException(400, "Закрыто")
     odds_map = {"1": event[1], "X": event[2], "2": event[3]}
     locked_odds = odds_map.get(choice)
     if not locked_odds: raise HTTPException(400, "Неверный исход")
     if row[0] < points: raise HTTPException(400, "Мало баллов")
+    
     conn.execute("INSERT INTO predictions (user_id, event_id, choice, points, locked_odds, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                  (uid, event_id, choice, points, locked_odds, datetime.now(timezone.utc).isoformat()))
     conn.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (points, uid))
@@ -203,7 +224,11 @@ async def get_history(request: Request):
     user = await current_user(request)
     uid = ensure_user(user)
     conn = get_db()
-    cur = conn.execute("""SELECT p.choice, p.points, p.locked_odds, p.status, p.created_at, e.title, e.sport, e.result FROM predictions p JOIN events e ON p.event_id = e.id WHERE p.user_id = ? ORDER BY p.id DESC LIMIT 50""", (uid,))
+    cur = conn.execute("""
+        SELECT p.choice, p.points, p.locked_odds, p.status, p.created_at, e.title, e.sport, e.result
+        FROM predictions p JOIN events e ON p.event_id = e.id
+        WHERE p.user_id = ? ORDER BY p.id DESC LIMIT 50
+    """, (uid,))
     rows = cur.fetchall()
     conn.close()
     return [{"choice": r[0], "points": r[1], "locked_odds": r[2], "status": r[3], "created_at": r[4], "title": r[5], "sport": r[6], "result": r[7]} for r in rows]
@@ -215,18 +240,23 @@ async def play_crash(request: Request):
     body = await request.json()
     bet = int(body.get("amount", 0)); cashout = float(body.get("cashout", 0)) 
     if bet < 1: raise HTTPException(400, "Мин. ставка 1")
+    
     rand = random.random()
     crash_point = round(random.uniform(1.0, 1.5), 2) if rand < 0.5 else round(random.uniform(1.5, 15.0), 2)
+    
     conn = get_db()
     cur = conn.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
     row = cur.fetchone()
     if not row or row[0] < bet: raise HTTPException(400, "Мало баллов")
+    
     conn.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (bet, uid))
     win_amount = 0
     if cashout > 0 and cashout <= crash_point:
         win_amount = int(bet * cashout)
         conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (win_amount, uid))
-    conn.execute("INSERT INTO crash_history (user_id, bet_amount, multiplier, win_amount, created_at) VALUES (?,?,?,?,?)", (uid, bet, crash_point, win_amount, datetime.now(timezone.utc).isoformat()))
+        
+    conn.execute("INSERT INTO crash_history (user_id, bet_amount, multiplier, win_amount, created_at) VALUES (?,?,?,?,?)", 
+                 (uid, bet, crash_point, win_amount, datetime.now(timezone.utc).isoformat()))
     conn.commit()
     conn.close()
     return {"ok": True, "crash_point": crash_point, "win": win_amount > 0, "win_amount": win_amount}
@@ -246,6 +276,7 @@ async def open_case(request: Request):
     uid = ensure_user(user)
     body = await request.json()
     case_id = int(body.get("case_id", 0))
+    
     conn = get_db()
     cur = conn.execute("SELECT price FROM cases WHERE id=?", (case_id,))
     case = cur.fetchone()
@@ -261,19 +292,14 @@ async def open_case(request: Request):
         skin = cur.fetchone()
         conn.execute("UPDATE user_settings SET forced_skin_id=NULL WHERE user_id=?", (uid,))
     else:
-        # Новая логика с процентами
-        cur = conn.execute("SELECT id, name, image_url, price, chance FROM skins WHERE case_id=?", (case_id,))
+        roll = random.randint(1, 100)
+        rarity = "Common" if roll <= 60 else "Rare" if roll <= 85 else "Immortal"
+        cur = conn.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=? AND rarity=?", (case_id, rarity))
         skins = cur.fetchall()
-        if not skins: raise HTTPException(400, "В кейсе нет скинов")
-        total_chance = sum(s[4] for s in skins)
-        roll = random.uniform(0, total_chance)
-        current_chance = 0
-        skin = skins[0]
-        for s in skins:
-            current_chance += s[4]
-            if roll <= current_chance:
-                skin = s
-                break
+        if not skins:
+            cur = conn.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=?", (case_id,))
+            skins = cur.fetchall()
+        skin = random.choice(skins)
     
     conn.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (case[0], uid))
     conn.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", (uid, skin[0], datetime.now(timezone.utc).isoformat()))
@@ -286,7 +312,11 @@ async def inventory(request: Request):
     user = await current_user(request)
     uid = ensure_user(user)
     conn = get_db()
-    cur = conn.execute("SELECT i.id, s.name, s.image_url, s.price, s.rarity FROM inventory i JOIN skins s ON i.skin_id = s.id WHERE i.user_id=? AND i.status='owned' ORDER BY s.price DESC", (uid,))
+    cur = conn.execute("""
+        SELECT i.id, s.name, s.image_url, s.price, s.rarity
+        FROM inventory i JOIN skins s ON i.skin_id = s.id 
+        WHERE i.user_id=? AND i.status='owned' ORDER BY s.price DESC
+    """, (uid,))
     rows = cur.fetchall()
     conn.close()
     return [{"inv_id": r[0], "name": r[1], "image_url": r[2], "price": r[3], "rarity": r[4]} for r in rows]
@@ -312,19 +342,23 @@ async def upgrade_skin(request: Request):
     uid = ensure_user(user)
     body = await request.json()
     inv_id = int(body.get("inv_id", 0)); chosen_chance = float(body.get("chance", 20)) 
+    
     conn = get_db()
     cur = conn.execute("SELECT custom_upgrade_chance FROM user_settings WHERE user_id=?", (uid,))
     settings = cur.fetchone()
     real_chance = settings[0] if settings and settings[0] else 10.0
+    
     cur = conn.execute("SELECT s.id, s.price, s.name, s.image_url, s.rarity FROM inventory i JOIN skins s ON i.skin_id = s.id WHERE i.id=? AND i.user_id=? AND i.status='owned'", (inv_id, uid))
     current_skin = cur.fetchone()
     if not current_skin: raise HTTPException(400, "Скин не найден")
+        
     ideal_price = current_skin[1] / (chosen_chance / 100.0)
     cur = conn.execute("SELECT id, name, image_url, price, rarity FROM skins WHERE price > ? ORDER BY ABS(price - ?) ASC LIMIT 1", (current_skin[1], ideal_price))
     target_skin = cur.fetchone()
     if not target_skin:
         cur = conn.execute("SELECT id, name, image_url, price, rarity FROM skins ORDER BY price DESC LIMIT 1")
         target_skin = cur.fetchone()
+        
     success = random.uniform(0, 100) <= real_chance
     if success:
         conn.execute("UPDATE inventory SET status='upgraded' WHERE id=?", (inv_id,))
@@ -346,11 +380,13 @@ async def give_points(request: Request):
     body = await request.json()
     target = str(body.get("target", "")).strip()
     amount = int(body.get("amount", 0)); action = str(body.get("action", "add"))
+    
     conn = get_db()
     if target.startswith("@"): cur = conn.execute("SELECT user_id FROM users WHERE username=?", (target[1:],))
     else: cur = conn.execute("SELECT user_id FROM users WHERE user_id=?", (int(target),))
     u_row = cur.fetchone()
     if not u_row: raise HTTPException(404, "Игрок не найден")
+    
     final_amount = amount if action == "add" else -amount
     conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (final_amount, u_row[0]))
     conn.commit()
@@ -376,8 +412,10 @@ async def admin_user_settings(request: Request):
     target_id = int(body.get("user_id", 0))
     forced_skin_id = body.get("forced_skin_id")
     custom_chance = int(body.get("custom_chance", 10))
+    
     if forced_skin_id == "": forced_skin_id = None
     if forced_skin_id: forced_skin_id = int(forced_skin_id)
+    
     conn = get_db()
     conn.execute("INSERT OR IGNORE INTO user_settings (user_id, custom_upgrade_chance) VALUES (?, 10)", (target_id,))
     conn.execute("UPDATE user_settings SET forced_skin_id=?, custom_upgrade_chance=? WHERE user_id=?", (forced_skin_id, custom_chance, target_id))
@@ -467,60 +505,6 @@ async def activate_promo(request: Request):
     conn.commit()
     conn.close()
     return {"ok": True, "message": f"+{promo[0]} баллов!"}
-
-# --- НОВЫЕ ЭНДПОИНТЫ ДЛЯ СОЗДАНИЯ КЕЙСОВ ---
-@app.post("/api/admin/create-case")
-async def admin_create_case(request: Request):
-    user = await current_user(request)
-    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    body = await request.json()
-    conn = get_db()
-    conn.execute("INSERT INTO cases (name, price, image_url) VALUES (?, ?, ?)", (body["name"], int(body["price"]), body["image_url"]))
-    conn.commit()
-    conn.close()
-    return {"ok": True, "message": "Кейс создан!"}
-
-@app.get("/api/admin/cases")
-async def admin_get_cases(request: Request):
-    user = await current_user(request)
-    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    conn = get_db()
-    cur = conn.execute("SELECT id, name, price, image_url FROM cases")
-    rows = cur.fetchall()
-    conn.close()
-    return [{"id": r[0], "name": r[1], "price": r[2], "image_url": r[3]} for r in rows]
-
-@app.post("/api/admin/add-skin")
-async def admin_add_skin(request: Request):
-    user = await current_user(request)
-    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    body = await request.json()
-    conn = get_db()
-    conn.execute("INSERT INTO skins (case_id, name, rarity, image_url, price, chance) VALUES (?, ?, ?, ?, ?, ?)",
-                 (int(body["case_id"]), body["name"], body["rarity"], body["image_url"], int(body["price"]), int(body.get("chance", 10))))
-    conn.commit()
-    conn.close()
-    return {"ok": True, "message": "Скин добавлен!"}
-
-@app.get("/api/admin/case-skins/{case_id}")
-async def admin_get_case_skins(case_id: int, request: Request):
-    user = await current_user(request)
-    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    conn = get_db()
-    cur = conn.execute("SELECT id, name, rarity, image_url, price, chance FROM skins WHERE case_id=?", (case_id,))
-    rows = cur.fetchall()
-    conn.close()
-    return [{"id": r[0], "name": r[1], "rarity": r[2], "image_url": r[3], "price": r[4], "chance": r[5]} for r in rows]
-
-@app.post("/api/admin/delete-skin/{skin_id}")
-async def admin_delete_skin(skin_id: int, request: Request):
-    user = await current_user(request)
-    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    conn = get_db()
-    conn.execute("DELETE FROM skins WHERE id=?", (skin_id,))
-    conn.commit()
-    conn.close()
-    return {"ok": True, "message": "Скин удален"}
 
 @app.get("/health")
 async def health(): return {"status": "ok"}
