@@ -127,6 +127,32 @@
         <button class="primary" type="submit" style="margin-top: 10px;">Сохранить настройки</button>
       </form>
 
+      <div class="section-title sub">УПРАВЛЕНИЕ КЕЙСАМИ</div>
+      <form id="admin-case-form" class="admin-form" style="margin-bottom: 15px;">
+        <input id="case-name" placeholder="Название кейса" required>
+        <input id="case-price" type="number" placeholder="Цена в PTS" required>
+        <input id="case-img" placeholder="Ссылка на картинку кейса" required>
+        <button class="primary" type="submit">Создать кейс</button>
+      </form>
+
+      <form id="admin-skin-form" class="admin-form" style="margin-bottom: 15px;">
+        <select id="skin-case-id" required><option value="">Выберите кейс...</option></select>
+        <input id="skin-name" placeholder="Название скина" required>
+        <input id="skin-price" type="number" placeholder="Цена в PTS" required>
+        <input id="skin-img" placeholder="Ссылка на картинку скина" required>
+        <div style="display: flex; gap: 10px;">
+          <select id="skin-rarity" style="flex: 1;">
+            <option value="Common">Common</option>
+            <option value="Rare">Rare</option>
+            <option value="Immortal">Immortal</option>
+          </select>
+          <input id="skin-chance" type="number" placeholder="Шанс %" value="10" required style="flex: 1;">
+        </div>
+        <button class="primary" type="submit">Добавить скин</button>
+      </form>
+
+      <div id="admin-skins-list" style="margin-bottom: 20px;"></div>
+
       <div class="section-title sub">ДОБАВИТЬ МАТЧ</div>
       <form id="admin-event-form" class="admin-form" style="margin-bottom: 24px;">
         <select id="admin-sport"><option>CS2</option><option>Dota 2</option><option>Футбол</option><option>Теннис</option></select>
