@@ -4,6 +4,7 @@ import hmac
 import hashlib
 import logging
 import random
+import feedparser
 from urllib.parse import parse_qsl
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -25,7 +26,6 @@ BOT_WEBAPP_URL = os.getenv("BOT_WEBAPP_URL", "").rstrip("/")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 ADMIN_IDS = {int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()}
 
-# --- НАСТРОЙКИ TURSO ---
 TURSO_URL = os.getenv("TURSO_DATABASE_URL", "")
 TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
 
@@ -505,6 +505,30 @@ async def activate_promo(request: Request):
     conn.commit()
     conn.close()
     return {"ok": True, "message": f"+{promo[0]} баллов!"}
+
+# --- НОВОСТИ (НОВОЕ) ---
+@app.get("/api/dota-news")
+async def get_dota_news(request: Request):
+    await current_user(request)
+    rss_url = "https://dota2.ru/news/rss/"
+    try:
+        feed = feedparser.parse(rss_url)
+        news_list = []
+        for entry in feed.entries[:10]:
+            news_list.append({
+                "title": entry.get("title", "Без названия"),
+                "link": entry.get("link", ""),
+                "published": entry.get("published", ""),
+                "summary": entry.get("summary", "")[:150] + "..."
+            })
+        return news_list
+    except Exception:
+        return []
+
+@app.get("/api/news-detail")
+async def get_news_detail(url: str, request: Request):
+    await current_user(request)
+    return {"html": f'<p style="color: #fff;">Читайте полную версию по ссылке:</p><a href="{url}" target="_blank" style="color: #55ff00; font-size: 16px; font-weight: bold;">Открыть новость</a>'}
 
 @app.get("/health")
 async def health(): return {"status": "ok"}
