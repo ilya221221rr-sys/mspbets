@@ -99,7 +99,7 @@ window.cashoutCrash = async function() {
   isCrashed = true; clearInterval(crashInterval); crashInterval = null;
   const bet = Number($("crash-bet").value);
   try {
-    const res = await api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: currentCrashMultiplier }) });
+    const res = await api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: Number(currentCrashMultiplier) }) });
     toast(`Забрано на ${currentCrashMultiplier.toFixed(2)}x! Выигрыш: ${res.win_amount} PTS`);
     $("crash-status").textContent = `Забрано на ${currentCrashMultiplier.toFixed(2)}x`; $("crash-status").style.color = "#55ff00";
   } catch(e) { toast(e.message); }
@@ -117,7 +117,7 @@ function crashEnd() {
 }
 function resetCrashButtons() { $("crash-start-btn").disabled = false; $("crash-cashout-btn").disabled = true; }
 
-// --- КЕЙСЫ С АНИМАЦИЕЙ ---
+// --- КЕЙСЫ С АНИМАЦИЕЙ (ИСПРАВЛЕНО) ---
 async function loadCases() {
   const cases = await api("/api/cases");
   $("cases-list").innerHTML = cases.map(c => `
@@ -138,10 +138,13 @@ window.openCase = async function(caseId) {
   resultText.style.display = "none";
   strip.style.display = "flex";
   pointer.style.display = "block";
+  strip.innerHTML = ""; // Очистка
   
   try {
     const data = await api("/api/cases/open", { method: "POST", body: JSON.stringify({ case_id: caseId }) });
     
+    if (!data.skin || !data.skin.image_url) throw new Error("Сервер не вернул скин");
+
     const fakeSkins = [
       "https://i.imgur.com/G7XpkYs.png", "https://i.imgur.com/0QWoP2i.png", 
       "https://i.imgur.com/7x8YDiz.png", "https://i.imgur.com/BegS1KI.png",
@@ -261,7 +264,6 @@ async function loadAdminUsers() {
   }
 }
 
-// --- УПРАВЛЕНИЕ КЕЙСАМИ ---
 async function loadAdminCases() {
   const cases = await api("/api/admin/cases");
   const select = $("skin-case-id");
