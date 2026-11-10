@@ -2,3 +2,6 @@ fastapi==0.115.12
 uvicorn[standard]==0.34.2
 aiogram==3.20.0.post0
 libsql
+requests
+beautifulsoup4
+lxml
