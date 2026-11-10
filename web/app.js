@@ -85,7 +85,8 @@ async function loadNews() {
     newsList.innerHTML = news.map(n => `
       <div onclick="openNewsDetail('${n.link}')" style="background: #1a1a1a; padding: 15px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #333; cursor: pointer;">
         <div style="color: #55ff00; font-weight: bold; font-size: 14px; margin-bottom: 5px;">${n.title}</div>
-        <div style="color: #888; font-size: 11px;">Нажмите, чтобы читать</div>
+        <div style="color: #888; font-size: 11px; margin-bottom: 5px;">${n.published}</div>
+        <div style="color: #aaa; font-size: 12px;">${n.summary}</div>
       </div>
     `).join("");
   } catch(e) {
@@ -133,7 +134,7 @@ window.cashoutCrash = async function() {
   isCrashed = true; clearInterval(crashInterval); crashInterval = null;
   const bet = Number($("crash-bet").value);
   try {
-    const res = await api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: Number(currentCrashMultiplier) }) });
+    const res = await api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: currentCrashMultiplier }) });
     toast(`Забрано на ${currentCrashMultiplier.toFixed(2)}x! Выигрыш: ${res.win_amount} PTS`);
     $("crash-status").textContent = `Забрано на ${currentCrashMultiplier.toFixed(2)}x`; $("crash-status").style.color = "#55ff00";
   } catch(e) { toast(e.message); }
@@ -172,22 +173,27 @@ window.openCase = async function(caseId) {
   resultText.style.display = "none";
   strip.style.display = "flex";
   pointer.style.display = "block";
-  strip.innerHTML = "";
   
   try {
     const data = await api("/api/cases/open", { method: "POST", body: JSON.stringify({ case_id: caseId }) });
-    if (!data.skin || !data.skin.image_url) throw new Error("Сервер не вернул скин");
-
-    const fakeSkins = ["https://i.imgur.com/G7XpkYs.png", "https://i.imgur.com/0QWoP2i.png", "https://i.imgur.com/7x8YDiz.png", "https://i.imgur.com/BegS1KI.png"];
+    
+    const fakeSkins = [
+      "https://i.imgur.com/G7XpkYs.png", "https://i.imgur.com/0QWoP2i.png", 
+      "https://i.imgur.com/7x8YDiz.png", "https://i.imgur.com/BegS1KI.png",
+      "https://i.imgur.com/AQiM6I8.png"
+    ];
+    
     let stripHTML = "";
     for (let i = 0; i < 30; i++) {
       const randomImg = fakeSkins[Math.floor(Math.random() * fakeSkins.length)];
-      stripHTML += `<img src="${randomImg}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333; flex-shrink: 0;">`;
+      stripHTML += `<img src="${randomImg}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333;">`;
     }
-    stripHTML += `<img src="${data.skin.image_url}" style="width: 80px; height: 80px; border-radius: 4px; border: 2px solid #55ff00; box-shadow: 0 0 10px #55ff00; flex-shrink: 0;">`;
+    
+    stripHTML += `<img src="${data.skin.image_url}" style="width: 80px; height: 80px; border-radius: 4px; border: 2px solid #55ff00; box-shadow: 0 0 10px #55ff00;">`;
+    
     for (let i = 0; i < 5; i++) {
       const randomImg = fakeSkins[Math.floor(Math.random() * fakeSkins.length)];
-      stripHTML += `<img src="${randomImg}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333; flex-shrink: 0;">`;
+      stripHTML += `<img src="${randomImg}" style="width: 80px; height: 80px; border-radius: 4px; border: 1px solid #333;">`;
     }
     
     strip.innerHTML = stripHTML;
@@ -204,13 +210,21 @@ window.openCase = async function(caseId) {
         strip.style.display = "none";
         pointer.style.display = "none";
         resultText.style.display = "block";
-        resultText.innerHTML = `<h3 style="color: #55ff00;">Вам выпал скин!</h3><img src="${data.skin.image_url}" style="width: 120px; margin: 10px 0;"><div style="font-weight: bold;">${data.skin.name}</div>`;
+        resultText.innerHTML = `
+          <h3 style="color: #55ff00;">Вам выпал скин!</h3>
+          <img src="${data.skin.image_url}" style="width: 120px; border-radius: 8px; margin: 10px 0;">
+          <div style="font-size: 18px; font-weight: bold;">${data.skin.name}</div>
+          <div style="color: #55ff00;">${data.skin.price} PTS</div>
+        `;
         toast("Скин добавлен в инвентарь!");
-        await loadMe(); await loadInventory();
+        await loadMe();
+        await loadInventory();
       }, 4100);
     }, 100);
   } catch(e) { 
-    toast(e.message); strip.style.display = "none"; pointer.style.display = "none";
+    toast(e.message);
+    strip.style.display = "none";
+    pointer.style.display = "none";
   }
 }
 
@@ -310,7 +324,7 @@ $("admin-event-form")?.addEventListener("submit", async e => {
   e.preventDefault();
   try {
     await api("/api/admin/create-event", { method: "POST", body: JSON.stringify({ sport: $("admin-sport").value, title: $("admin-title").value, o1: Number($("admin-o1").value), ox: $("admin-ox").value ? Number($("admin-ox").value) : null, o2: Number($("admin-o2").value) }) });
-    toast("Матч добавлен! Уведомления уйдут через 40 секунд."); $("admin-event-form").reset(); await loadEvents(); loadSettle();
+    toast("Матч добавлен!"); $("admin-event-form").reset(); await loadEvents(); loadSettle();
   } catch(e) { toast(e.message); }
 });
 
