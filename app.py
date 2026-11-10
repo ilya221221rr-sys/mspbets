@@ -480,7 +480,6 @@ async def activate_promo(request: Request):
     conn.close()
     return {"ok": True, "message": f"+{promo[0]} баллов!"}
 
-# Управление кейсами в админке
 @app.post("/api/admin/create-case")
 async def admin_create_case(request: Request):
     user = await current_user(request)
