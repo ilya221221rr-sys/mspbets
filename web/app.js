@@ -261,6 +261,52 @@ async function loadAdminUsers() {
   }
 }
 
+// --- УПРАВЛЕНИЕ КЕЙСАМИ ---
+async function loadAdminCases() {
+  const cases = await api("/api/admin/cases");
+  const select = $("skin-case-id");
+  if (select) select.innerHTML = `<option value="">Выберите кейс...</option>` + cases.map(c => `<option value="${c.id}">${c.name} (${c.price} PTS)</option>`).join("");
+}
+
+$("admin-case-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const res = await api("/api/admin/create-case", { method: "POST", body: JSON.stringify({ name: $("case-name").value, price: Number($("case-price").value), image_url: $("case-img").value }) });
+    toast(res.message); $("admin-case-form").reset(); await loadAdminCases(); await loadCases();
+  } catch(e) { toast(e.message); }
+});
+
+$("admin-skin-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const res = await api("/api/admin/add-skin", {
+      method: "POST",
+      body: JSON.stringify({
+        case_id: Number($("skin-case-id").value), name: $("skin-name").value,
+        price: Number($("skin-price").value), image_url: $("skin-img").value,
+        rarity: $("skin-rarity").value, chance: Number($("skin-chance").value)
+      })
+    });
+    toast(res.message); $("admin-skin-form").reset();
+    if ($("skin-case-id").value) loadCaseSkins($("skin-case-id").value);
+  } catch(e) { toast(e.message); }
+});
+
+async function loadCaseSkins(caseId) {
+  const skins = await api(`/api/admin/case-skins/${caseId}`);
+  $("admin-skins-list").innerHTML = skins.map(s => `
+    <div style="display: flex; justify-content: space-between; align-items: center; background: #1a1a1a; padding: 8px; margin-bottom: 5px; border-radius: 4px;">
+      <span>${s.name} (${s.chance}%)</span>
+      <button onclick="deleteSkin(${s.id})" style="background: #f87171; border: none; padding: 4px 8px; border-radius: 4px; color: white; cursor: pointer;">Удалить</button>
+    </div>
+  `).join("");
+}
+window.deleteSkin = async function(skinId) {
+  if (!confirm("Удалить этот скин?")) return;
+  try { await api(`/api/admin/delete-skin/${skinId}`, { method: "POST" }); toast("Скин удален"); if ($("skin-case-id").value) loadCaseSkins($("skin-case-id").value); } catch(e) { toast(e.message); }
+}
+$("skin-case-id")?.addEventListener("change", (e) => { if (e.target.value) loadCaseSkins(e.target.value); });
+
 $("admin-points-form")?.addEventListener("submit", async e => {
   e.preventDefault();
   try {
@@ -355,7 +401,7 @@ document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click", asy
   document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("hidden",p.id!==btn.dataset.tab));
   if(btn.dataset.tab==="history") await loadHistory();
   if(btn.dataset.tab==="rating") await loadRating();
-  if(btn.dataset.tab==="admin") { await loadAdminUsers(); await loadEvents(); loadSettle(); }
+  if(btn.dataset.tab==="admin") { await loadAdminUsers(); await loadAdminCases(); await loadEvents(); loadSettle(); }
   if(btn.dataset.tab==="cases") { await loadCases(); await loadInventory(); }
 }));
 
