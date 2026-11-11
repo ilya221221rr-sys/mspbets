@@ -122,13 +122,52 @@ async function loadHistory() {
     let statusText = "В ожидании"; let statusColor = "#ccc";
     if (h.status === "won") { statusText = `Выиграл: +${Math.floor(h.points * h.locked_odds)} PTS`; statusColor = "#55ff00"; }
     if (h.status === "lost") { statusText = "Проиграл"; statusColor = "#f87171"; }
+    
     return `
-    <div class="history-card" style="border-left: 4px solid ${statusColor};">
+    <div class="history-card" style="border-left: 4px solid ${statusColor}; cursor: pointer;" onclick="openBetCard('${h.title}', '${h.sport}', '${h.choice}', ${h.points}, ${h.locked_odds}, ${h.status === 'won'}, ${h.status === 'lost'})">
       <div class="history-title">${h.title} (${h.sport})</div>
       <div style="color: #aaa; font-size: 12px; margin: 4px 0;">Исход: ${h.choice} | Кф: ${h.locked_odds} | Ставка: ${h.points} PTS</div>
       <div class="history-status" style="color: ${statusColor};">${statusText}</div>
     </div>`;
   }).join("") : `<div class="empty">История пуста</div>`;
+}
+
+// --- КАРТОЧКА СТАВКИ ---
+let currentBetData = null;
+
+window.openBetCard = function(title, sport, choice, points, odds, isWon, isLost) {
+  currentBetData = { title, sport, choice, points, odds };
+  
+  $("bet-card-title").textContent = title;
+  $("bet-card-sport").textContent = sport;
+  $("bet-card-choice").textContent = choice === "1" ? "П1" : choice === "X" ? "Ничья" : "П2";
+  $("bet-card-points").textContent = `${points} PTS`;
+  $("bet-card-odds").textContent = odds;
+  $("bet-card-win").textContent = `${Math.floor(points * odds)} PTS`;
+  
+  const banner = $("bet-card-banner");
+  if (isWon) {
+    banner.style.background = "linear-gradient(135deg, #55ff00, #00aa00)";
+  } else if (isLost) {
+    banner.style.background = "linear-gradient(135deg, #ff4d4d, #aa0000)";
+  } else {
+    banner.style.background = "linear-gradient(135deg, #333, #111)";
+  }
+  
+  $("bet-modal").classList.remove("hidden");
+}
+
+window.shareBet = function() {
+  if (!currentBetData) return;
+  
+  const text = `🔥 Моя ставка в MSPBETS!\n\n🏆 ${currentBetData.sport}\n⚔️ ${currentBetData.title}\n💰 Ставка: ${currentBetData.points} PTS на ${currentBetData.choice === "1" ? "П1" : currentBetData.choice === "X" ? "Ничью" : "П2"}\n📈 Кф: ${currentBetData.odds}\n\n👉 Заходи и ставь: ${window.location.origin}`;
+  
+  if (window.Telegram?.WebApp?.switchInlineQuery) {
+    window.Telegram.WebApp.switchInlineQuery(text, ['users', 'groups', 'channels']);
+  } else {
+    navigator.clipboard.writeText(text);
+    toast("Текст скопирован в буфер обмена!");
+  }
 }
 
 async function loadRating() {
