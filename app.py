@@ -179,7 +179,8 @@ async def start_message(message: Message):
         "🏆 <b>MSPBETS</b>\n\n"
         "Делай прогнозы на матчи, получай виртуальные баллы и поднимайся в рейтинге!\n"
         "Баллы не имеют денежной стоимости.\n\n"
-        "📢 <b>Наш Telegram-канал:</b> https://t.me/mspbetsprizi",
+        "📢 <b>Наш Telegram-канал:</b> https://t.me/mspbetsprizi\n"
+        "Здесь начинается победа.",
         reply_markup=None
     )
     await bot.set_chat_menu_button(chat_id=message.chat.id, menu_button=MenuButtonWebApp(text="Открыть MSPBETS", web_app=WebAppInfo(url=BOT_WEBAPP_URL)))
@@ -291,6 +292,25 @@ async def predict(request: Request):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+@app.post("/api/calc-win")
+async def calc_win(request: Request):
+    user = await current_user(request)
+    body = await request.json()
+    event_id = int(body["event_id"]); points = int(body["points"]); choice = str(body["choice"])
+    
+    conn = get_db()
+    cur = conn.execute("SELECT status, odds_1, odds_x, odds_2 FROM events WHERE id=?", (event_id,))
+    event = cur.fetchone()
+    conn.close()
+    
+    if not event or event[0] != "open": raise HTTPException(400, "Закрыто")
+    odds_map = {"1": event[1], "X": event[2], "2": event[3]}
+    odds = odds_map.get(choice)
+    if not odds: raise HTTPException(400, "Неверный исход")
+    
+    potential_win = int(points * odds)
+    return {"potential_win": potential_win}
 
 @app.post("/api/express")
 async def express_bet(request: Request):
@@ -646,6 +666,7 @@ async def settle_event(event_id: int, request: Request):
     conn = get_db()
     conn.execute("UPDATE events SET status='settled', result=? WHERE id=?", (result, event_id))
     
+    # ОРДИНАРЫ
     cur = conn.execute("SELECT user_id, points, choice, locked_odds FROM predictions WHERE event_id=? AND status='pending'", (event_id,))
     for p in cur.fetchall():
         if p[2] == result:
@@ -655,6 +676,7 @@ async def settle_event(event_id: int, request: Request):
         else:
             conn.execute("UPDATE predictions SET status='lost' WHERE user_id=? AND event_id=?", (p[0], event_id))
             
+    # ЭКСПРЕССЫ
     cur = conn.execute("SELECT bet_id, choice FROM bet_events WHERE event_id=?", (event_id,))
     bet_items = cur.fetchall()
     for bi in bet_items:
@@ -701,29 +723,41 @@ async def admin_bets_report(request: Request):
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     
     conn = get_db()
+    report = []
+    
     cur = conn.execute("""
         SELECT p.id, u.first_name, u.username, e.title, p.choice, p.points, p.locked_odds, p.status, p.created_at
         FROM predictions p 
         JOIN users u ON p.user_id = u.user_id
         JOIN events e ON p.event_id = e.id
-        ORDER BY p.id DESC LIMIT 50
     """)
-    rows = cur.fetchall()
-    conn.close()
-    
-    report = []
-    for r in rows:
+    for r in cur.fetchall():
         report.append({
-            "id": r[0],
-            "user": r[1] or r[2] or "Без имени",
-            "event": r[3],
-            "choice": r[4],
-            "points": r[5],
-            "odds": r[6],
-            "status": r[7],
-            "time": r[8]
+            "id": r[0], "user": r[1] or r[2] or "Без имени", "event": r[3],
+            "choice": r[4], "points": r[5], "odds": r[6], "status": r[7], "time": r[8], "type": "Ординар"
         })
-    return report
+    
+    cur = conn.execute("""
+        SELECT b.id, u.first_name, u.username, b.amount, b.total_odds, b.status, b.created_at
+        FROM bets b JOIN users u ON b.user_id = u.user_id
+    """)
+    for r in cur.fetchall():
+        bet_id = r[0]
+        cur2 = conn.execute("""
+            SELECT e.title, be.choice FROM bet_events be 
+            JOIN events e ON be.event_id = e.id WHERE be.bet_id = ?
+        """, (bet_id,))
+        evs = cur2.fetchall()
+        ev_titles = "; ".join([f"{e[0]} ({e[1]})" for e in evs])
+        
+        report.append({
+            "id": r[0], "user": r[1] or r[2] or "Без имени", "event": ev_titles,
+            "choice": "Экспресс", "points": r[3], "odds": r[4], "status": r[5], "time": r[6], "type": "Экспресс"
+        })
+    
+    conn.close()
+    report.sort(key=lambda x: x["time"] or "", reverse=True)
+    return report[:50]
 
 @app.post("/api/admin/create-promo")
 async def create_promo(request: Request):
