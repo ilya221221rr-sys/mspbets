@@ -14,8 +14,9 @@ import libsql
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from aiogram import Bot, Dispatcher
-from aiogram.types import Update, WebAppInfo, MenuButtonWebApp
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command
+from aiogram.types import Update, WebAppInfo, MenuButtonWebApp, Message
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
@@ -39,8 +40,7 @@ notify_task = None
 
 async def flush_pending_matches():
     global pending_matches, notify_task
-    await asyncio.sleep(60) # Ждем 60 секунд
-    
+    await asyncio.sleep(60)
     if not pending_matches:
         notify_task = None
         return
@@ -115,6 +115,15 @@ def init_db():
         event_id INTEGER NOT NULL, choice TEXT NOT NULL, points INTEGER NOT NULL,
         locked_odds REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
     )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS bets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+        amount INTEGER NOT NULL, total_odds REAL NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS bet_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, bet_id INTEGER NOT NULL,
+        event_id INTEGER NOT NULL, choice TEXT NOT NULL, locked_odds REAL NOT NULL
+    )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS promo_codes (code TEXT PRIMARY KEY, reward INTEGER NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS promo_uses (user_id INTEGER NOT NULL, code TEXT NOT NULL, PRIMARY KEY (user_id, code))""")
     conn.execute("""CREATE TABLE IF NOT EXISTS cases (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, price INTEGER NOT NULL, image_url TEXT NOT NULL)""")
@@ -163,18 +172,46 @@ def ensure_user(user):
     return uid
 
 # --- БОТ ---
-@dp.message()
-async def start_message(message):
+@dp.message(Command("start"))
+async def start_message(message: Message):
     if not BOT_WEBAPP_URL: return
     await message.answer(
         "🏆 <b>MSPBETS</b>\n\n"
         "Делай прогнозы на матчи, получай виртуальные баллы и поднимайся в рейтинге!\n"
-        "Баллы не имеют денежной стоимости, их нельзя купить или вывести.\n\n"
-        "📢 <b>Наш Telegram-канал:</b> https://t.me/mspbetsprizi\n"
-        "(Там мы публикуем новые промокоды и анонсы обновлений)",
+        "Баллы не имеют денежной стоимости.\n\n"
+        "📢 <b>Наш Telegram-канал:</b> https://t.me/mspbetsprizi",
         reply_markup=None
     )
     await bot.set_chat_menu_button(chat_id=message.chat.id, menu_button=MenuButtonWebApp(text="Открыть MSPBETS", web_app=WebAppInfo(url=BOT_WEBAPP_URL)))
+
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔ У вас нет доступа к этой команде.")
+        return
+    
+    text = message.text.replace("/broadcast", "").strip()
+    if not text:
+        await message.answer("❌ Используйте: <code>/broadcast Текст сообщения</code>")
+        return
+    
+    await message.answer("⏳ Начинаю рассылку...")
+    
+    conn = get_db()
+    cur = conn.execute("SELECT user_id FROM users")
+    users = cur.fetchall()
+    conn.close()
+    
+    success = 0
+    fail = 0
+    for u in users:
+        try:
+            await bot.send_message(chat_id=u[0], text=text, parse_mode="HTML")
+            success += 1
+        except Exception:
+            fail += 1
+    
+    await message.answer(f"✅ Рассылка завершена.\nОтправлено: {success}\nОшибок: {fail}")
 
 # --- LIFESPAN ---
 @asynccontextmanager
@@ -255,6 +292,49 @@ async def predict(request: Request):
     conn.close()
     return {"ok": True}
 
+@app.post("/api/express")
+async def express_bet(request: Request):
+    user = await current_user(request)
+    uid = ensure_user(user)
+    body = await request.json()
+    amount = int(body.get("amount", 0))
+    items = body.get("items", [])
+    
+    if amount < 1 or len(items) < 2: raise HTTPException(400, "Мин. 2 события и сумма > 0")
+    
+    conn = get_db()
+    cur = conn.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+    row = cur.fetchone()
+    if not row or row[0] < amount: raise HTTPException(400, "Мало баллов")
+    
+    total_odds = 1.0
+    for item in items:
+        ev_id = int(item["event_id"]); choice = str(item["choice"])
+        cur = conn.execute("SELECT status, odds_1, odds_x, odds_2 FROM events WHERE id=?", (ev_id,))
+        ev = cur.fetchone()
+        if not ev or ev[0] != "open": raise HTTPException(400, f"Событие {ev_id} закрыто")
+        odds_map = {"1": ev[1], "X": ev[2], "2": ev[3]}
+        locked_odds = odds_map.get(choice)
+        if not locked_odds: raise HTTPException(400, f"Неверный исход в {ev_id}")
+        total_odds *= locked_odds
+    
+    conn.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (amount, uid))
+    cur = conn.execute("INSERT INTO bets (user_id, amount, total_odds, created_at) VALUES (?, ?, ?, ?)",
+                       (uid, amount, total_odds, datetime.now(timezone.utc).isoformat()))
+    bet_id = cur.lastrowid
+    
+    for item in items:
+        ev_id = int(item["event_id"]); choice = str(item["choice"])
+        cur = conn.execute("SELECT odds_1, odds_x, odds_2 FROM events WHERE id=?", (ev_id,))
+        ev = cur.fetchone()
+        locked_odds = {"1": ev[0], "X": ev[1], "2": ev[2]}.get(choice)
+        conn.execute("INSERT INTO bet_events (bet_id, event_id, choice, locked_odds) VALUES (?, ?, ?, ?)",
+                     (bet_id, ev_id, choice, locked_odds))
+        
+    conn.commit()
+    conn.close()
+    return {"ok": True, "message": f"Экспресс принят. Общий кф: {round(total_odds, 2)}"}
+
 @app.get("/api/history")
 async def get_history(request: Request):
     user = await current_user(request)
@@ -265,9 +345,22 @@ async def get_history(request: Request):
         FROM predictions p JOIN events e ON p.event_id = e.id
         WHERE p.user_id = ? ORDER BY p.id DESC LIMIT 50
     """, (uid,))
-    rows = cur.fetchall()
+    rows = [dict(zip([c[0] for c in cur.description], r)) for r in cur.fetchall()]
+    
+    cur = conn.execute("SELECT id, amount, total_odds, status, created_at FROM bets WHERE user_id = ?", (uid,))
+    bets = cur.fetchall()
+    for b in bets:
+        cur2 = conn.execute("""SELECT e.title, be.choice, be.locked_odds FROM bet_events be 
+            JOIN events e ON be.event_id = e.id WHERE be.bet_id = ?""", (b[0],))
+        ev_list = cur2.fetchall()
+        titles = ", ".join([f"{ev[0]} ({ev[1]})" for ev in ev_list])
+        rows.append({
+            "choice": "Экспресс", "points": b[1], "locked_odds": b[2], "status": b[3],
+            "created_at": b[4], "title": titles, "sport": "Экспресс", "result": None
+        })
     conn.close()
-    return [{"choice": r[0], "points": r[1], "locked_odds": r[2], "status": r[3], "created_at": r[4], "title": r[5], "sport": r[6], "result": r[7]} for r in rows]
+    rows.sort(key=lambda x: x["created_at"], reverse=True)
+    return rows[:50]
 
 @app.post("/api/crash/play")
 async def play_crash(request: Request):
@@ -440,6 +533,27 @@ async def admin_update_odds(event_id: int, request: Request):
     conn.close()
     return {"ok": True, "message": "Коэффициенты обновлены!"}
 
+@app.post("/api/admin/toggle-event/{event_id}")
+async def toggle_event(event_id: int, request: Request):
+    user = await current_user(request)
+    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    
+    conn = get_db()
+    cur = conn.execute("SELECT status FROM events WHERE id=?", (event_id,))
+    row = cur.fetchone()
+    if not row: 
+        conn.close()
+        raise HTTPException(404, "Матч не найден")
+    
+    current_status = row[0]
+    new_status = "closed" if current_status == "open" else "open"
+    
+    conn.execute("UPDATE events SET status=? WHERE id=?", (new_status, event_id))
+    conn.commit()
+    conn.close()
+    
+    return {"ok": True, "status": new_status, "message": f"Матч {'закрыт' if new_status == 'closed' else 'открыт'}"}
+
 @app.post("/api/admin/user-settings")
 async def admin_user_settings(request: Request):
     user = await current_user(request)
@@ -512,6 +626,8 @@ async def settle_event(event_id: int, request: Request):
     result = str((await request.json()).get("result", ""))
     conn = get_db()
     conn.execute("UPDATE events SET status='settled', result=? WHERE id=?", (result, event_id))
+    
+    # ОРДИНАРЫ
     cur = conn.execute("SELECT user_id, points, choice, locked_odds FROM predictions WHERE event_id=? AND status='pending'", (event_id,))
     for p in cur.fetchall():
         if p[2] == result:
@@ -520,6 +636,32 @@ async def settle_event(event_id: int, request: Request):
             conn.execute("UPDATE predictions SET status='won' WHERE user_id=? AND event_id=?", (p[0], event_id))
         else:
             conn.execute("UPDATE predictions SET status='lost' WHERE user_id=? AND event_id=?", (p[0], event_id))
+            
+    # ЭКСПРЕССЫ
+    cur = conn.execute("SELECT bet_id, choice FROM bet_events WHERE event_id=?", (event_id,))
+    bet_items = cur.fetchall()
+    for bi in bet_items:
+        bet_id = bi[0]; bet_choice = bi[1]
+        if bet_choice != result:
+            conn.execute("UPDATE bets SET status='lost' WHERE id=?", (bet_id,))
+        else:
+            cur2 = conn.execute("""
+                SELECT be.choice, e.result FROM bet_events be 
+                JOIN events e ON be.event_id = e.id 
+                WHERE be.bet_id = ? AND e.status != 'open'
+            """, (bet_id,))
+            evs = cur2.fetchall()
+            all_correct = True
+            for e_choice, e_result in evs:
+                if e_choice != e_result: all_correct = False; break
+            
+            if all_correct:
+                cur3 = conn.execute("SELECT user_id, amount, total_odds FROM bets WHERE id=?", (bet_id,))
+                b = cur3.fetchone()
+                reward = int(b[1] * b[2])
+                conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (reward, b[0]))
+                conn.execute("UPDATE bets SET status='won' WHERE id=?", (bet_id,))
+                
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -538,6 +680,32 @@ async def create_promo(request: Request):
     finally:
         conn.close()
     return {"ok": True, "message": "Промокод создан!"}
+
+@app.post("/api/admin/broadcast")
+async def admin_broadcast(request: Request):
+    user = await current_user(request)
+    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    
+    body = await request.json()
+    message_text = str(body.get("text", "")).strip()
+    
+    if not message_text:
+        raise HTTPException(400, "Текст сообщения не может быть пустым")
+    
+    conn = get_db()
+    cur = conn.execute("SELECT user_id FROM users")
+    users = cur.fetchall()
+    conn.close()
+    
+    success_count = 0
+    for u in users:
+        try:
+            await bot.send_message(chat_id=u[0], text=message_text, parse_mode="HTML")
+            success_count += 1
+        except Exception:
+            pass
+    
+    return {"ok": True, "message": f"Сообщение отправлено {success_count} игрокам"}
 
 @app.post("/api/promo/activate")
 async def activate_promo(request: Request):
