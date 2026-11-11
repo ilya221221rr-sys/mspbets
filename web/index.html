@@ -10,6 +10,7 @@
     .history-title { font-weight: bold; color: #fff; }
     .crash-graph { width: 100%; height: 150px; background: #111; border: 1px solid #333; border-radius: 8px; margin: 10px 0; position: relative; overflow: hidden; }
     .crash-multiplier { font-size: 36px; font-weight: bold; text-align: center; margin: 10px 0; }
+    #express-panel { position: fixed; bottom: 0; left: 0; width: 100%; background: #111; border-top: 2px solid #55ff00; padding: 15px; z-index: 1000; box-shadow: 0 -5px 15px rgba(0,0,0,0.5); }
   </style>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
@@ -23,7 +24,7 @@
       <div class="balance"><small>БАЛАНС</small><b id="balance">—</b> <span>PTS</span></div>
     </div>
   </header>
-  <main>
+  <main style="padding-bottom: 200px;">
     <section class="hero"><h1>ТВОЯ ИГРА.<br><span>ТВОИ БАЛЛЫ.</span></h1></section>
     
     <nav style="overflow-x: auto; white-space: nowrap; display: flex; gap: 10px; padding-bottom: 5px;">
@@ -133,6 +134,12 @@
         <button class="primary" type="submit" style="margin-top: 10px;">Сохранить настройки</button>
       </form>
 
+      <div class="section-title sub">РАССЫЛКА ВСЕМ ИГРОКАМ</div>
+      <form id="admin-broadcast-form" class="admin-form" style="margin-bottom: 24px;">
+        <textarea id="broadcast-text" placeholder="Введите текст сообщения для всех игроков..." required rows="4" style="width: 100%; background: #0a0a0a; border: 1px solid #262626; color: #fff; padding: 12px; border-radius: 8px; font-family: inherit; resize: vertical;"></textarea>
+        <button class="primary" type="submit">Отправить всем</button>
+      </form>
+
       <div class="section-title sub">ДОБАВИТЬ МАТЧ</div>
       <form id="admin-event-form" class="admin-form" style="margin-bottom: 24px;">
         <select id="admin-sport"><option>CS2</option><option>Dota 2</option><option>Футбол</option><option>Теннис</option></select>
@@ -157,7 +164,19 @@
     </section>
   </main>
 
-  <!-- МОДАЛЬНОЕ ОКНО ДЛЯ НОВОСТЕЙ -->
+  <!-- КОРЗИНА ЭКСПРЕССОВ -->
+  <div id="express-panel" class="hidden">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+      <div style="font-weight: bold; color: #fff;">КУПОН (ЭКСПРЕСС)</div>
+      <div style="color: #55ff00; font-weight: bold;">Общий кф: <span id="cart-total">0.00</span></div>
+    </div>
+    <div id="cart-list" style="max-height: 150px; overflow-y: auto;"></div>
+    <div style="display: flex; gap: 10px; margin-top: 10px;">
+      <input id="express-amount" type="number" min="1" placeholder="Сумма" style="flex: 1; padding: 10px; background: #000; border: 1px solid #55ff00; color: #fff; border-radius: 6px;">
+      <button onclick="submitExpress()" class="primary" style="flex: 1;">Поставить экспресс</button>
+    </div>
+  </div>
+
   <div id="news-modal" class="hidden" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(10, 10, 10, 0.95); z-index: 2000; overflow-y: auto; padding: 20px; box-sizing: border-box;">
     <div style="max-width: 800px; margin: 0 auto;">
       <button onclick="document.getElementById('news-modal').classList.add('hidden')" style="background: #333; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; margin-bottom: 20px; cursor: pointer; font-weight: bold;">← Закрыть</button>
