@@ -58,7 +58,7 @@ window.placeBet = async function(eventId, choice, odds) {
 window.addToCart = function(eventId, choice, odds, title) {
   const existingIndex = expressCart.findIndex(item => item.eventId === eventId);
   if (existingIndex !== -1) {
-    expressCart[existingIndex] = { eventId, choice, odds, title }; // Заменяем
+    expressCart[existingIndex] = { eventId, choice, odds, title };
   } else {
     expressCart.push({ eventId, choice, odds, title });
   }
@@ -429,6 +429,36 @@ $("btn-promo")?.addEventListener("click", async () => {
   } catch(e) { toast(e.message); }
 });
 
+async function loadBetsReport() {
+  const container = $("bets-report-list");
+  container.innerHTML = `<div class="empty">Загрузка...</div>`;
+  
+  try {
+    const report = await api("/api/admin/bets-report");
+    if (!report || report.length === 0) {
+      container.innerHTML = `<div class="empty">Ставок пока нет.</div>`;
+      return;
+    }
+    
+    container.innerHTML = report.map(r => `
+      <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; margin-bottom: 5px; font-size: 12px; border-left: 4px solid ${r.status === 'won' ? '#55ff00' : r.status === 'lost' ? '#f87171' : '#ccc'};">
+        <div style="display: flex; justify-content: space-between; font-weight: bold; color: #fff;">
+          <span>${r.user}</span>
+          <span>${r.points} PTS (Кф: ${r.odds})</span>
+        </div>
+        <div style="color: #aaa; margin-top: 3px;">
+          ${r.event} — Исход: <b>${r.choice}</b>
+        </div>
+        <div style="color: ${r.status === 'won' ? '#55ff00' : r.status === 'lost' ? '#f87171' : '#ccc'}; margin-top: 3px;">
+          ${r.status === 'pending' ? 'В ожидании' : r.status === 'won' ? 'Выиграл' : 'Проиграл'}
+        </div>
+      </div>
+    `).join("");
+  } catch(e) {
+    container.innerHTML = `<div class="empty">Ошибка: ${e.message}</div>`;
+  }
+}
+
 async function loadSettle() {
   const open = events.filter(e=>e.status==="open" || e.status==="closed");
   $("settle-list").innerHTML = open.map(e=>`
@@ -492,7 +522,7 @@ document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click", asy
   if(btn.dataset.tab==="history") await loadHistory();
   if(btn.dataset.tab==="rating") await loadRating();
   if(btn.dataset.tab==="news") await loadNews();
-  if(btn.dataset.tab==="admin") { await loadAdminUsers(); await loadEvents(); loadSettle(); }
+  if(btn.dataset.tab==="admin") { await loadAdminUsers(); await loadEvents(); loadSettle(); loadBetsReport(); }
   if(btn.dataset.tab==="cases") { await loadCases(); await loadInventory(); }
 }));
 
