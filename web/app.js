@@ -31,9 +31,9 @@ async function loadEvents() {
       <div class="event-top"><span>${e.sport}</span><span>Кф: ${e.odds_1} ${hasDraw ? '/ '+e.odds_x : ''} / ${e.odds_2}</span></div>
       <h3>${e.title}</h3>
       <div class="choices">
-        <button class="choice" onclick="placeBet(${e.id}, '1', ${e.odds_1})">П1 (${e.odds_1})</button>
-        ${hasDraw ? `<button class="choice" onclick="placeBet(${e.id}, 'X', ${e.odds_x})">X (${e.odds_x})</button>` : ''}
-        <button class="choice" onclick="placeBet(${e.id}, '2', ${e.odds_2})">П2 (${e.odds_2})</button>
+        <button class="choice" onclick="openBetSlip(${e.id}, '1', ${e.odds_1}, '${e.title}', 'П1')">П1 (${e.odds_1})</button>
+        ${hasDraw ? `<button class="choice" onclick="openBetSlip(${e.id}, 'X', ${e.odds_x}, '${e.title}', 'Ничья')">X (${e.odds_x})</button>` : ''}
+        <button class="choice" onclick="openBetSlip(${e.id}, '2', ${e.odds_2}, '${e.title}', 'П2')">П2 (${e.odds_2})</button>
       </div>
       <div style="display: flex; gap: 5px; margin-top: 5px;">
         <button onclick="addToCart(${e.id}, '1', ${e.odds_1}, '${e.title}')" style="flex:1; background: #333; color: #fff; border: none; padding: 6px; border-radius: 4px; font-size: 11px;">+ П1</button>
@@ -44,14 +44,55 @@ async function loadEvents() {
   }).join("") || `<div class="empty">Нет матчей</div>`;
 }
 
-window.placeBet = async function(eventId, choice, odds) {
-  const points = prompt(`Ставка на ${choice} с кф. ${odds}.\nВведите сумму:`, "100");
-  if (!points) return;
-  try {
-    await api("/api/predict", { method: "POST", body: JSON.stringify({ event_id: eventId, points: Number(points), choice }) });
-    toast(`Ставка принята по кэфу ${odds}!`);
-    await loadMe();
-  } catch(e) { toast(e.message); }
+// --- КУПОН (ORDINAR) ---
+let currentSlipData = null;
+
+window.openBetSlip = function(eventId, choice, odds, title, choiceName) {
+  currentSlipData = { eventId, choice, odds };
+  
+  $("slip-event-title").textContent = title;
+  $("slip-event-choice").textContent = `Ваш выбор: ${choiceName}`;
+  $("slip-odds").textContent = odds;
+  
+  $("slip-amount").value = 100;
+  updateSlipWin();
+  
+  const btn = $("slip-submit-btn");
+  btn.onclick = async () => {
+    const points = Number($("slip-amount").value);
+    if (points < 1) return toast("Введите корректную сумму");
+    
+    btn.disabled = true;
+    btn.textContent = "Отправка...";
+    
+    try {
+      await api("/api/predict", { 
+        method: "POST", 
+        body: JSON.stringify({ event_id: eventId, points, choice }) 
+      });
+      toast("Ставка принята!");
+      $("bet-slip-modal").classList.add("hidden");
+      await loadMe();
+    } catch(e) { 
+      toast(e.message); 
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Сделать ставку";
+    }
+  };
+  
+  $("bet-slip-modal").classList.remove("hidden");
+}
+
+window.updateSlipWin = async function() {
+  if (!currentSlipData) return;
+  const points = Number($("slip-amount").value);
+  if (points < 1) {
+    $("slip-win").textContent = "0 PTS";
+    return;
+  }
+  const potentialWin = Math.floor(points * currentSlipData.odds);
+  $("slip-win").textContent = `${potentialWin.toLocaleString("ru-RU")} PTS`;
 }
 
 // --- КОРЗИНА ЭКСПРЕССОВ ---
@@ -132,7 +173,7 @@ async function loadHistory() {
   }).join("") : `<div class="empty">История пуста</div>`;
 }
 
-// --- КАРТОЧКА СТАВКИ ---
+// --- КАРТОЧКА СТАВКИ (NEW DESIGN) ---
 let currentBetData = null;
 
 window.openBetCard = function(title, sport, choice, points, odds, isWon, isLost) {
@@ -213,15 +254,17 @@ window.openNewsDetail = async function(url) {
   }
 }
 
-// --- КРАШ ---
+// --- КРАШ (ИСПРАВЛЕН) ---
 let crashInterval = null, currentCrashPoint = 0, currentCrashMultiplier = 1.00, isCrashed = false;
 window.startCrash = function() {
   const bet = Number($("crash-bet").value);
   if (bet < 1) return toast("Введите сумму");
   if (crashInterval) return;
+  
   $("crash-start-btn").disabled = true; $("crash-cashout-btn").disabled = false;
   $("crash-status").textContent = "ИГРА ИДЕТ..."; $("crash-status").style.color = "#55ff00";
   $("crash-line").style.height = "0%"; currentCrashMultiplier = 1.00; isCrashed = false;
+  
   const rand = Math.random();
   if (rand < 0.5) currentCrashPoint = 1 + Math.random() * 0.5;
   else currentCrashPoint = 1.5 + Math.random() * 10;
@@ -229,34 +272,66 @@ window.startCrash = function() {
   crashInterval = setInterval(() => {
     if (isCrashed) return;
     currentCrashMultiplier += 0.05;
+    
+    // Обновляем визуал
     const heightPerc = Math.min((currentCrashMultiplier / currentCrashPoint) * 100, 100);
     $("crash-line").style.height = `${heightPerc}%`;
     $("crash-mult").textContent = currentCrashMultiplier.toFixed(2) + "x";
-    if (currentCrashMultiplier >= currentCrashPoint) crashEnd();
+    
+    // Если достигли краша
+    if (currentCrashMultiplier >= currentCrashPoint) {
+        crashEnd();
+    }
   }, 100);
 }
+
 window.cashoutCrash = async function() {
   if (isCrashed || currentCrashMultiplier <= 1.00) return;
-  isCrashed = true; clearInterval(crashInterval); crashInterval = null;
+  isCrashed = true; 
+  clearInterval(crashInterval); crashInterval = null;
+  
   const bet = Number($("crash-bet").value);
   try {
     const res = await api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: currentCrashMultiplier }) });
-    toast(`Забрано на ${currentCrashMultiplier.toFixed(2)}x! Выигрыш: ${res.win_amount} PTS`);
-    $("crash-status").textContent = `Забрано на ${currentCrashMultiplier.toFixed(2)}x`; $("crash-status").style.color = "#55ff00";
+    
+    // Если сервер говорит, что игра уже упала (защита от читеров), показываем это
+    if (!res.win && res.win_amount === 0) {
+        toast(`Вы не успели! Игра упала.`);
+        $("crash-status").textContent = `Вы не успели!`;
+        $("crash-status").style.color = "#f87171";
+    } else {
+        toast(`Забрано на ${currentCrashMultiplier.toFixed(2)}x! Выигрыш: ${res.win_amount} PTS`);
+        $("crash-status").textContent = `Забрано на ${currentCrashMultiplier.toFixed(2)}x`; 
+        $("crash-status").style.color = "#55ff00";
+    }
   } catch(e) { toast(e.message); }
-  resetCrashButtons(); await loadMe();
+  
+  resetCrashButtons(); 
+  await loadMe();
 }
+
 function crashEnd() {
-  isCrashed = true; clearInterval(crashInterval); crashInterval = null;
+  isCrashed = true; 
+  clearInterval(crashInterval); crashInterval = null;
+  
   $("crash-mult").textContent = currentCrashPoint.toFixed(2) + "x";
-  $("crash-status").textContent = `КРАШ! Игра упала на ${currentCrashPoint.toFixed(2)}x`; $("crash-status").style.color = "#f87171";
+  $("crash-status").textContent = `КРАШ! Игра упала на ${currentCrashPoint.toFixed(2)}x`; 
+  $("crash-status").style.color = "#f87171";
   $("crash-line").style.background = "#f87171";
+  
   const bet = Number($("crash-bet").value);
+  // Отправляем проигрыш на сервер
   api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: 0 }) }).catch(()=>{});
+  
   setTimeout(() => { $("crash-line").style.background = "linear-gradient(to right, rgba(85,255,0,0.2), #55ff00)"; }, 2000);
-  resetCrashButtons(); loadMe();
+  resetCrashButtons(); 
+  loadMe();
 }
-function resetCrashButtons() { $("crash-start-btn").disabled = false; $("crash-cashout-btn").disabled = true; }
+
+function resetCrashButtons() { 
+    $("crash-start-btn").disabled = false; 
+    $("crash-cashout-btn").disabled = true; 
+}
 
 // --- КЕЙСЫ С АНИМАЦИЕЙ ---
 async function loadCases() {
@@ -482,11 +557,11 @@ async function loadBetsReport() {
     container.innerHTML = report.map(r => `
       <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; margin-bottom: 5px; font-size: 12px; border-left: 4px solid ${r.status === 'won' ? '#55ff00' : r.status === 'lost' ? '#f87171' : '#ccc'};">
         <div style="display: flex; justify-content: space-between; font-weight: bold; color: #fff;">
-          <span>${r.user}</span>
+          <span>${r.user} <span style="font-size: 10px; color: #888; font-weight: normal;">(${r.type})</span></span>
           <span>${r.points} PTS (Кф: ${r.odds})</span>
         </div>
-        <div style="color: #aaa; margin-top: 3px;">
-          ${r.event} — Исход: <b>${r.choice}</b>
+        <div style="color: #aaa; margin-top: 3px; font-size: 11px; line-height: 1.3;">
+          ${r.event}
         </div>
         <div style="color: ${r.status === 'won' ? '#55ff00' : r.status === 'lost' ? '#f87171' : '#ccc'}; margin-top: 3px;">
           ${r.status === 'pending' ? 'В ожидании' : r.status === 'won' ? 'Выиграл' : 'Проиграл'}
