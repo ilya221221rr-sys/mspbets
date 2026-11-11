@@ -363,6 +363,24 @@ async def get_history(request: Request):
     rows.sort(key=lambda x: x["created_at"], reverse=True)
     return rows[:50]
 
+@app.get("/api/bet/{bet_id}")
+async def get_bet_detail(bet_id: int, request: Request):
+    await current_user(request)
+    conn = get_db()
+    cur = conn.execute("""
+        SELECT e.title, e.sport, p.choice, p.points, p.locked_odds, p.status, p.created_at
+        FROM predictions p JOIN events e ON p.event_id = e.id
+        WHERE p.id = ?
+    """, (bet_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Ставка не найдена")
+    return {
+        "title": row[0], "sport": row[1], "choice": row[2],
+        "points": row[3], "odds": row[4], "status": row[5], "created_at": row[6]
+    }
+
 @app.post("/api/crash/play")
 async def play_crash(request: Request):
     user = await current_user(request)
@@ -628,7 +646,6 @@ async def settle_event(event_id: int, request: Request):
     conn = get_db()
     conn.execute("UPDATE events SET status='settled', result=? WHERE id=?", (result, event_id))
     
-    # ОРДИНАРЫ
     cur = conn.execute("SELECT user_id, points, choice, locked_odds FROM predictions WHERE event_id=? AND status='pending'", (event_id,))
     for p in cur.fetchall():
         if p[2] == result:
@@ -638,7 +655,6 @@ async def settle_event(event_id: int, request: Request):
         else:
             conn.execute("UPDATE predictions SET status='lost' WHERE user_id=? AND event_id=?", (p[0], event_id))
             
-    # ЭКСПРЕССЫ (ИСПРАВЛЕНО)
     cur = conn.execute("SELECT bet_id, choice FROM bet_events WHERE event_id=?", (event_id,))
     bet_items = cur.fetchall()
     for bi in bet_items:
