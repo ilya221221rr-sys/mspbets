@@ -120,6 +120,14 @@
         <button class="primary" type="submit">Применить</button>
       </form>
 
+      <div class="section-title sub">ОТЧЕТ ПО СТАВКАМ</div>
+      <div style="margin-bottom: 24px;">
+        <button onclick="loadBetsReport()" class="primary" style="margin-bottom: 10px;">Обновить отчет</button>
+        <div id="bets-report-list" style="max-height: 400px; overflow-y: auto;">
+          <div class="empty">Нажмите «Обновить отчет»</div>
+        </div>
+      </div>
+
       <div class="section-title sub">НАСТРОЙКИ ИГРОКА (ДРОП И АПГРЕЙД)</div>
       <form id="user-settings-form" class="admin-form" style="margin-bottom: 24px;">
         <select id="settings-user-id" required><option value="" disabled selected>Выберите игрока...</option></select>
