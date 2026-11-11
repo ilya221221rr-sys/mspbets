@@ -666,7 +666,6 @@ async def settle_event(event_id: int, request: Request):
     conn = get_db()
     conn.execute("UPDATE events SET status='settled', result=? WHERE id=?", (result, event_id))
     
-    # ОРДИНАРЫ
     cur = conn.execute("SELECT user_id, points, choice, locked_odds FROM predictions WHERE event_id=? AND status='pending'", (event_id,))
     for p in cur.fetchall():
         if p[2] == result:
@@ -676,7 +675,6 @@ async def settle_event(event_id: int, request: Request):
         else:
             conn.execute("UPDATE predictions SET status='lost' WHERE user_id=? AND event_id=?", (p[0], event_id))
             
-    # ЭКСПРЕССЫ
     cur = conn.execute("SELECT bet_id, choice FROM bet_events WHERE event_id=?", (event_id,))
     bet_items = cur.fetchall()
     for bi in bet_items:
