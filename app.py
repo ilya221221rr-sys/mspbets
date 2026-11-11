@@ -14,7 +14,7 @@ import libsql
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Update, WebAppInfo, MenuButtonWebApp, Message
 from aiogram.client.default import DefaultBotProperties
@@ -340,6 +340,7 @@ async def get_history(request: Request):
     user = await current_user(request)
     uid = ensure_user(user)
     conn = get_db()
+    
     cur = conn.execute("""
         SELECT p.choice, p.points, p.locked_odds, p.status, p.created_at, e.title, e.sport, e.result
         FROM predictions p JOIN events e ON p.event_id = e.id
@@ -637,34 +638,76 @@ async def settle_event(event_id: int, request: Request):
         else:
             conn.execute("UPDATE predictions SET status='lost' WHERE user_id=? AND event_id=?", (p[0], event_id))
             
-    # ЭКСПРЕССЫ
+    # ЭКСПРЕССЫ (ИСПРАВЛЕНО)
     cur = conn.execute("SELECT bet_id, choice FROM bet_events WHERE event_id=?", (event_id,))
     bet_items = cur.fetchall()
     for bi in bet_items:
         bet_id = bi[0]; bet_choice = bi[1]
+        
         if bet_choice != result:
             conn.execute("UPDATE bets SET status='lost' WHERE id=?", (bet_id,))
-        else:
-            cur2 = conn.execute("""
-                SELECT be.choice, e.result FROM bet_events be 
-                JOIN events e ON be.event_id = e.id 
-                WHERE be.bet_id = ? AND e.status != 'open'
-            """, (bet_id,))
-            evs = cur2.fetchall()
-            all_correct = True
-            for e_choice, e_result in evs:
-                if e_choice != e_result: all_correct = False; break
+            continue
             
-            if all_correct:
-                cur3 = conn.execute("SELECT user_id, amount, total_odds FROM bets WHERE id=?", (bet_id,))
-                b = cur3.fetchone()
-                reward = int(b[1] * b[2])
-                conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (reward, b[0]))
-                conn.execute("UPDATE bets SET status='won' WHERE id=?", (bet_id,))
+        cur2 = conn.execute("""
+            SELECT be.choice, e.status, e.result 
+            FROM bet_events be 
+            JOIN events e ON be.event_id = e.id 
+            WHERE be.bet_id = ?
+        """, (bet_id,))
+        evs = cur2.fetchall()
+        
+        all_correct = True
+        all_settled = True
+        
+        for e_choice, e_status, e_result in evs:
+            if e_status == 'settled' and e_choice != e_result:
+                all_correct = False
+                break
+            if e_status == 'open' or e_status == 'closed':
+                all_settled = False
+                
+        if not all_correct:
+            conn.execute("UPDATE bets SET status='lost' WHERE id=?", (bet_id,))
+        elif all_settled:
+            cur3 = conn.execute("SELECT user_id, amount, total_odds FROM bets WHERE id=?", (bet_id,))
+            b = cur3.fetchone()
+            reward = int(b[1] * b[2])
+            conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (reward, b[0]))
+            conn.execute("UPDATE bets SET status='won' WHERE id=?", (bet_id,))
                 
     conn.commit()
     conn.close()
     return {"ok": True}
+
+@app.get("/api/admin/bets-report")
+async def admin_bets_report(request: Request):
+    user = await current_user(request)
+    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    
+    conn = get_db()
+    cur = conn.execute("""
+        SELECT p.id, u.first_name, u.username, e.title, p.choice, p.points, p.locked_odds, p.status, p.created_at
+        FROM predictions p 
+        JOIN users u ON p.user_id = u.user_id
+        JOIN events e ON p.event_id = e.id
+        ORDER BY p.id DESC LIMIT 50
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    
+    report = []
+    for r in rows:
+        report.append({
+            "id": r[0],
+            "user": r[1] or r[2] or "Без имени",
+            "event": r[3],
+            "choice": r[4],
+            "points": r[5],
+            "odds": r[6],
+            "status": r[7],
+            "time": r[8]
+        })
+    return report
 
 @app.post("/api/admin/create-promo")
 async def create_promo(request: Request):
