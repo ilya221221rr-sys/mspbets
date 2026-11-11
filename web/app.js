@@ -273,12 +273,10 @@ window.startCrash = function() {
     if (isCrashed) return;
     currentCrashMultiplier += 0.05;
     
-    // Обновляем визуал
     const heightPerc = Math.min((currentCrashMultiplier / currentCrashPoint) * 100, 100);
     $("crash-line").style.height = `${heightPerc}%`;
     $("crash-mult").textContent = currentCrashMultiplier.toFixed(2) + "x";
     
-    // Если достигли краша
     if (currentCrashMultiplier >= currentCrashPoint) {
         crashEnd();
     }
@@ -294,7 +292,6 @@ window.cashoutCrash = async function() {
   try {
     const res = await api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: currentCrashMultiplier }) });
     
-    // Если сервер говорит, что игра уже упала (защита от читеров), показываем это
     if (!res.win && res.win_amount === 0) {
         toast(`Вы не успели! Игра упала.`);
         $("crash-status").textContent = `Вы не успели!`;
@@ -320,7 +317,6 @@ function crashEnd() {
   $("crash-line").style.background = "#f87171";
   
   const bet = Number($("crash-bet").value);
-  // Отправляем проигрыш на сервер
   api("/api/crash/play", { method: "POST", body: JSON.stringify({ amount: bet, cashout: 0 }) }).catch(()=>{});
   
   setTimeout(() => { $("crash-line").style.background = "linear-gradient(to right, rgba(85,255,0,0.2), #55ff00)"; }, 2000);
