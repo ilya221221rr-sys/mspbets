@@ -1,7 +1,7 @@
 const tg = window.Telegram?.WebApp;
 tg?.ready(); tg?.expand();
 const headers = {"Content-Type":"application/json","X-Telegram-Init-Data":tg?.initData || ""};
-let me = null, events = [];
+let me = null, events = [], expressCart = [];
 const $ = id => document.getElementById(id);
 
 async function api(path, options={}) {
@@ -35,6 +35,11 @@ async function loadEvents() {
         ${hasDraw ? `<button class="choice" onclick="placeBet(${e.id}, 'X', ${e.odds_x})">X (${e.odds_x})</button>` : ''}
         <button class="choice" onclick="placeBet(${e.id}, '2', ${e.odds_2})">П2 (${e.odds_2})</button>
       </div>
+      <div style="display: flex; gap: 5px; margin-top: 5px;">
+        <button onclick="addToCart(${e.id}, '1', ${e.odds_1}, '${e.title}')" style="flex:1; background: #333; color: #fff; border: none; padding: 6px; border-radius: 4px; font-size: 11px;">+ П1</button>
+        ${hasDraw ? `<button onclick="addToCart(${e.id}, 'X', ${e.odds_x}, '${e.title}')" style="flex:1; background: #333; color: #fff; border: none; padding: 6px; border-radius: 4px; font-size: 11px;">+ X</button>` : ''}
+        <button onclick="addToCart(${e.id}, '2', ${e.odds_2}, '${e.title}')" style="flex:1; background: #333; color: #fff; border: none; padding: 6px; border-radius: 4px; font-size: 11px;">+ П2</button>
+      </div>
     </article>`;
   }).join("") || `<div class="empty">Нет матчей</div>`;
 }
@@ -45,6 +50,68 @@ window.placeBet = async function(eventId, choice, odds) {
   try {
     await api("/api/predict", { method: "POST", body: JSON.stringify({ event_id: eventId, points: Number(points), choice }) });
     toast(`Ставка принята по кэфу ${odds}!`);
+    await loadMe();
+  } catch(e) { toast(e.message); }
+}
+
+// --- КОРЗИНА ЭКСПРЕССОВ ---
+window.addToCart = function(eventId, choice, odds, title) {
+  const existingIndex = expressCart.findIndex(item => item.eventId === eventId);
+  if (existingIndex !== -1) {
+    expressCart[existingIndex] = { eventId, choice, odds, title }; // Заменяем
+  } else {
+    expressCart.push({ eventId, choice, odds, title });
+  }
+  updateCartUI();
+  toast(`Добавлено в купон: ${title} (${choice})`);
+}
+
+window.removeFromCart = function(eventId) {
+  expressCart = expressCart.filter(item => item.eventId !== eventId);
+  updateCartUI();
+}
+
+function updateCartUI() {
+  const cartList = $("cart-list");
+  const cartTotal = $("cart-total");
+  const cartPanel = $("express-panel");
+  
+  if (expressCart.length === 0) {
+    cartPanel.classList.add("hidden");
+    return;
+  }
+  
+  cartPanel.classList.remove("hidden");
+  
+  let totalOdds = 1;
+  cartList.innerHTML = expressCart.map(item => {
+    totalOdds *= item.odds;
+    return `
+    <div style="display: flex; justify-content: space-between; align-items: center; background: #222; padding: 8px; margin-bottom: 5px; border-radius: 4px; font-size: 12px;">
+      <span>${item.title} (${item.choice}) - ${item.odds}</span>
+      <button onclick="removeFromCart(${item.eventId})" style="background: #f87171; border: none; color: #fff; padding: 2px 6px; border-radius: 3px; cursor: pointer;">X</button>
+    </div>`;
+  }).join("");
+  
+  cartTotal.textContent = totalOdds.toFixed(2);
+}
+
+window.submitExpress = async function() {
+  if (expressCart.length < 2) return toast("Мин. 2 события для экспресса");
+  const amount = Number($("express-amount").value);
+  if (amount < 1) return toast("Введите сумму");
+  
+  try {
+    const res = await api("/api/express", {
+      method: "POST",
+      body: JSON.stringify({
+        amount: amount,
+        items: expressCart.map(i => ({ event_id: i.eventId, choice: i.choice }))
+      })
+    });
+    toast(res.message);
+    expressCart = [];
+    updateCartUI();
     await loadMe();
   } catch(e) { toast(e.message); }
 }
@@ -312,6 +379,23 @@ $("admin-dropdown-points")?.addEventListener("submit", async e => {
   } catch(e) { toast(e.message); }
 });
 
+$("admin-broadcast-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  const text = $("broadcast-text").value.trim();
+  if (!text) return toast("Введите текст");
+  
+  if (!confirm(`Отправить сообщение всем игрокам?\n\n${text.substring(0, 100)}...`)) return;
+  
+  try {
+    const res = await api("/api/admin/broadcast", {
+      method: "POST",
+      body: JSON.stringify({ text })
+    });
+    toast(res.message);
+    $("admin-broadcast-form").reset();
+  } catch(e) { toast(e.message); }
+});
+
 $("user-settings-form")?.addEventListener("submit", async e => {
   e.preventDefault();
   try {
@@ -324,7 +408,7 @@ $("admin-event-form")?.addEventListener("submit", async e => {
   e.preventDefault();
   try {
     await api("/api/admin/create-event", { method: "POST", body: JSON.stringify({ sport: $("admin-sport").value, title: $("admin-title").value, o1: Number($("admin-o1").value), ox: $("admin-ox").value ? Number($("admin-ox").value) : null, o2: Number($("admin-o2").value) }) });
-    toast("Матч добавлен!"); $("admin-event-form").reset(); await loadEvents(); loadSettle();
+    toast("Матч добавлен! Уведомления уйдут через 60 секунд."); $("admin-event-form").reset(); await loadEvents(); loadSettle();
   } catch(e) { toast(e.message); }
 });
 
@@ -346,13 +430,21 @@ $("btn-promo")?.addEventListener("click", async () => {
 });
 
 async function loadSettle() {
-  const open = events.filter(e=>e.status==="open");
+  const open = events.filter(e=>e.status==="open" || e.status==="closed");
   $("settle-list").innerHTML = open.map(e=>`
     <div class="settle" style="margin-bottom: 10px; background: #1a1a1a; padding: 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 5px;">
-      <div style="font-size: 14px;">${e.title}</div>
+      <div style="font-size: 14px; display: flex; justify-content: space-between;">
+        <span>${e.title}</span>
+        <span style="color: ${e.status === 'open' ? '#55ff00' : '#f87171'}; font-weight: bold;">
+          ${e.status === 'open' ? 'ОТКРЫТ' : 'ЗАКРЫТ'}
+        </span>
+      </div>
       <div style="font-size: 12px; color: #aaa;">Текущие Кф: ${e.odds_1} / ${e.odds_x || '-'} / ${e.odds_2}</div>
       <div style="display: flex; gap: 5px;">
         <button onclick="updateOdds(${e.id}, ${e.odds_1}, ${e.odds_x || 'null'}, ${e.odds_2})" style="background: #ffaa00; color: #000; border: none; padding: 4px 8px; border-radius: 4px;">✏️ Изменить Кф</button>
+        <button onclick="toggleEvent(${e.id})" style="background: ${e.status === 'open' ? '#f87171' : '#55ff00'}; color: #000; border: none; padding: 4px 8px; border-radius: 4px;">
+          ${e.status === 'open' ? '🔒 Закрыть' : '🔓 Открыть'}
+        </button>
       </div>
       <div style="display: flex; gap: 5px; margin-top: 5px;">
         <button onclick="settle(${e.id}, '1')">П1</button>
@@ -361,6 +453,15 @@ async function loadSettle() {
       </div>
     </div>
   `).join("") || "Нет матчей";
+}
+
+window.toggleEvent = async function(id) {
+  try {
+    const res = await api(`/api/admin/toggle-event/${id}`, { method: "POST" });
+    toast(res.message);
+    await loadEvents();
+    loadSettle();
+  } catch(e) { toast(e.message); }
 }
 
 window.updateOdds = async function(id, o1, ox, o2) {
