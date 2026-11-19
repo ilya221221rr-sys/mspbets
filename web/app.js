@@ -106,8 +106,9 @@
     busy: false,
   };
 
-  const SPORT_ICON = { 'CS2': '🎯', 'Dota 2': '🛡️', 'Футбол': '⚽', 'Теннис': '🎾' };
-  const choiceLabel = (c) => (c === '1' ? 'П1' : c === 'X' ? 'Ничья' : c === '2' ? 'П2' : String(c));
+  const SPORT_ICON = { 'CS2': '🎯', 'Dota 2': '🛡️', 'Футбол': '⚽', 'Теннис': '🎾', 'Баскетбол': '🏀', 'Хоккей': '🏒' };
+  const fmtStart = (iso) => { try { const d = new Date(iso); const t = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); const today = new Date(); const tm = new Date(today.getTime() + 864e5); const same = (a, b) => a.toDateString() === b.toDateString(); return (same(d, today) ? 'Сегодня' : same(d, tm) ? 'Завтра' : d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })) + ', ' + t; } catch (_) { return 'Приём ставок'; } };
+  const choiceLabel = (c) => (c === 'void' ? 'Возврат' : c === '1' ? 'П1' : c === 'X' ? 'Ничья' : c === '2' ? 'П2' : String(c));
   const choiceShort = (c) => (c === '1' ? 'П1' : c === 'X' ? 'X' : c === '2' ? 'П2' : String(c));
   const oddOf = (e, c) => (c === '1' ? e.odds_1 : c === 'X' ? e.odds_x : e.odds_2);
 
@@ -130,16 +131,18 @@
   }
 
   async function loadMe() {
-    state.me = await api('/api/me');
+    state.me = await api('/api/v2/me');
     animateBalance(Number(state.me.balance));
     const name = state.me.first_name || state.me.username;
     $('hero-name').textContent = name ? 'Привет, ' + name : 'MSPBETS';
     if (state.me.is_admin) $$('.admin-only').forEach((x) => x.classList.remove('hidden'));
+    if (window.MSP && MSP.onMe) MSP.onMe(state.me);
   }
 
   // ---------- Матчи ----------
   async function loadEvents() {
     state.events = await api('/api/events');
+    try { state.watch = new Set((await api('/api/v2/watch')).map((w) => w.event_id)); } catch (_) { state.watch = state.watch || new Set(); }
     renderEvents();
   }
 
@@ -161,7 +164,7 @@
 
     const list = open.filter((e) => state.filter === 'all' || e.sport === state.filter);
     $('event-list').innerHTML = list.map((e) => {
-      const hasDraw = e.sport === 'Футбол' && e.odds_x;
+      const hasDraw = !!e.odds_x;
       const teams = splitTeams(e.title);
       const teamsHtml = teams
         ? `<div class="team">${esc(teams[0])}</div><div class="vs">VS</div><div class="team">${esc(teams[1])}</div>`
@@ -169,8 +172,8 @@
       return `
         <article class="match" data-id="${e.id}">
           <div class="match-head">
-            <span class="sport-badge">${SPORT_ICON[e.sport] || '🏆'} ${esc(e.sport)}</span>
-            <span class="live-dot">Приём ставок</span>
+            <span class="sport-badge">${SPORT_ICON[e.sport] || '🏆'} ${esc(e.league || e.sport)}</span>
+            <span class="live-dot">${e.starts_at ? esc(fmtStart(e.starts_at)) : 'Приём ставок'}</span>
           </div>
           <div class="teams">${teamsHtml}</div>
           <div class="odds" style="--n:${hasDraw ? 3 : 2}">
@@ -178,6 +181,7 @@
             ${hasDraw ? oddBtn(e, 'X', 'Ничья', e.odds_x) : ''}
             ${oddBtn(e, '2', 'П2', e.odds_2)}
           </div>
+          <button type="button" class="bell${state.watch && state.watch.has(e.id) ? ' on' : ''}" data-action="watch" data-id="${e.id}">${state.watch && state.watch.has(e.id) ? '🔔 Уведомим, если кэф вырастет' : '🔕 Сообщить, если кэф вырастет'}</button>
         </article>`;
     }).join('') || '<div class="empty">Сейчас нет открытых матчей.<br>Загляни чуть позже 👀</div>';
   }
@@ -274,7 +278,7 @@
       $('history-list').innerHTML = hist.length ? hist.map((h, idx) => {
         const cls = h.status === 'won' ? 'won' : h.status === 'lost' ? 'lost' : 'pending';
         const st = h.status === 'won' ? `Выиграл: +${fmt(Math.floor(h.points * h.locked_odds))} PTS`
-          : h.status === 'lost' ? 'Проиграл' : 'В ожидании';
+          : h.status === 'lost' ? 'Проиграл' : h.status === 'void' ? 'Возврат ставки' : 'В ожидании';
         return `
           <button type="button" class="hist ${cls}" data-action="bet-open" data-idx="${idx}">
             <div class="hist-top"><span class="hist-sport">${esc(h.sport)}</span><span class="hist-meta">Кф ${odd2(h.locked_odds)}</span></div>
@@ -328,9 +332,9 @@
       const top = rows.slice(0, 3);
       const order = top.length === 3 ? [1, 0, 2] : top.map((_, i) => i);
       const podium = `<div class="podium">${order.map((i) => `
-        <div class="pod p${i + 1}"><div class="medal">${medals[i]}</div><div class="nm">${nm(top[i])}</div><div class="sc">${fmt(top[i].balance)}</div></div>`).join('')}</div>`;
+        <div class="pod p${i + 1}" data-action="player" data-uid="${top[i].user_id}"><div class="medal">${medals[i]}</div><div class="nm">${nm(top[i])}</div><div class="sc">${fmt(top[i].balance)}</div></div>`).join('')}</div>`;
       const rest = rows.slice(3).map((r, i) => `
-        <div class="rank${isMe(r) ? ' me' : ''}"><span class="pos">${i + 4}</span><span class="nm">${nm(r)}</span><span class="sc">${fmt(r.balance)} PTS</span></div>`).join('');
+        <div class="rank${isMe(r) ? ' me' : ''}" data-action="player" data-uid="${r.user_id}"><span class="pos">${i + 4}</span><span class="nm">${nm(r)}</span><span class="sc">${fmt(r.balance)} PTS</span></div>`).join('');
       $('rating-list').innerHTML = podium + rest;
     } catch (e) { $('rating-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   }
@@ -356,271 +360,7 @@
     if (tg && tg.openLink) tg.openLink(url); else window.open(url, '_blank', 'noopener');
   }
 
-  // ---------- Краш ----------
-  const crash = { running: false, pending: false, m: 1, point: 0, t0: 0, elapsed: 0, raf: 0, pts: [], history: [] };
-
-  function crashBetValue() { return Math.floor(Number($('crash-bet').value)); }
-  function renderCrashHistory() {
-    $('crash-history').innerHTML = crash.history.length
-      ? crash.history.map((h) => `<span class="ch ${h.won ? 'win' : 'lose'}">${h.v.toFixed(2)}x</span>`).join('')
-      : '<span class="crash-hint">Здесь появятся результаты раундов</span>';
-  }
-
-  function drawCrash(mode) {
-    const c = $('crash-canvas');
-    const r = c.getBoundingClientRect();
-    if (!r.width) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const W = Math.round(r.width * dpr), H = Math.round(r.height * dpr);
-    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
-    const ctx = c.getContext('2d');
-    ctx.clearRect(0, 0, W, H);
-    const pad = { l: 38 * dpr, r: 16 * dpr, t: 16 * dpr, b: 18 * dpr };
-    const tMax = Math.max(8, crash.elapsed * 1.12);
-    const mMax = Math.max(2.2, crash.m * 1.18);
-    const gw = W - pad.l - pad.r, gh = H - pad.t - pad.b;
-    const X = (t) => pad.l + gw * (t / tMax);
-    const Y = (m) => H - pad.b - gh * ((m - 1) / (mMax - 1));
-
-    ctx.lineWidth = dpr;
-    ctx.font = `${10 * dpr}px Manrope, sans-serif`;
-    ctx.textBaseline = 'middle';
-    for (let i = 0; i <= 4; i++) {
-      const y = pad.t + (gh * i) / 4;
-      ctx.strokeStyle = 'rgba(255,255,255,.06)';
-      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-      ctx.fillStyle = 'rgba(139,144,171,.8)';
-      ctx.fillText((1 + (mMax - 1) * (1 - i / 4)).toFixed(1) + 'x', 4 * dpr, y);
-    }
-    if (!crash.pts.length) return;
-
-    const col = mode === 'crashed' ? '#FF5D7A' : mode === 'cashed' ? '#2EE59D' : '#22D3EE';
-    const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
-    grad.addColorStop(0, col + '55');
-    grad.addColorStop(1, col + '00');
-    ctx.beginPath();
-    crash.pts.forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(p.m)) : ctx.moveTo(X(p.t), Y(p.m))));
-    const last = crash.pts[crash.pts.length - 1];
-    ctx.lineTo(X(last.t), H - pad.b); ctx.lineTo(X(0), H - pad.b); ctx.closePath();
-    ctx.fillStyle = grad; ctx.fill();
-
-    ctx.beginPath();
-    crash.pts.forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(p.m)) : ctx.moveTo(X(p.t), Y(p.m))));
-    ctx.strokeStyle = col; ctx.lineWidth = 3 * dpr; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    ctx.shadowColor = col; ctx.shadowBlur = 14 * dpr; ctx.stroke(); ctx.shadowBlur = 0;
-
-    ctx.beginPath(); ctx.arc(X(last.t), Y(last.m), 6 * dpr, 0, Math.PI * 2);
-    ctx.fillStyle = '#fff'; ctx.shadowColor = col; ctx.shadowBlur = 16 * dpr; ctx.fill(); ctx.shadowBlur = 0;
-  }
-
-  function setCrashUi(status, cls) {
-    $('crash-status').textContent = status;
-    $('crash-mult').className = 'crash-mult' + (cls ? ' ' + cls : '');
-  }
-  function crashButtons(running) {
-    $('crash-start-btn').disabled = running;
-    $('crash-cashout-btn').disabled = !running;
-    $('crash-bet').disabled = running;
-  }
-
-  function startCrash() {
-    const bet = crashBetValue();
-    if (!(bet >= 1)) return toast('Введите сумму', 'err');
-    if (state.me && bet > state.me.balance) return toast('Мало баллов', 'err');
-    if (crash.running || crash.pending) return;
-
-    crash.running = true; crash.m = 1; crash.elapsed = 0; crash.pts = [{ t: 0, m: 1 }];
-    crash.point = Math.random() < 0.5 ? 1 + Math.random() * 0.5 : 1.5 + Math.random() * 10;
-    crash.t0 = performance.now();
-    crashButtons(true);
-    setCrashUi('Ракета набирает высоту…', 'live');
-    $('crash-mult').textContent = '1.00x';
-    haptic('medium');
-
-    const tick = (now) => {
-      if (!crash.running) return;
-      crash.elapsed = (now - crash.t0) / 1000;
-      const t = crash.elapsed;
-      crash.m = 1 + 0.5 * t + 0.04 * t * t;
-      if (crash.m >= crash.point) { crash.m = crash.point; crash.pts.push({ t, m: crash.m }); return crashEnd(); }
-      crash.pts.push({ t, m: crash.m });
-      $('crash-mult').textContent = crash.m.toFixed(2) + 'x';
-      drawCrash('live');
-      crash.raf = requestAnimationFrame(tick);
-    };
-    crash.raf = requestAnimationFrame(tick);
-  }
-
-  async function cashoutCrash() {
-    if (!crash.running || crash.pending || crash.m <= 1) return;
-    crash.running = false; crash.pending = true;
-    cancelAnimationFrame(crash.raf);
-    const mult = crash.m;
-    const bet = crashBetValue();
-    try {
-      const res = await post('/api/crash/play', { amount: bet, cashout: mult });
-      if (!res.win && res.win_amount === 0) {
-        toast('Вы не успели! Игра упала.', 'err');
-        setCrashUi('Вы не успели!', 'crashed');
-        drawCrash('crashed');
-        crash.history.unshift({ v: res.crash_point || mult, won: false });
-      } else {
-        ok(`Забрано на ${mult.toFixed(2)}x! Выигрыш: ${fmt(res.win_amount)} PTS`);
-        setCrashUi(`Забрано на ${mult.toFixed(2)}x · +${fmt(res.win_amount)} PTS`, 'cashed');
-        drawCrash('cashed');
-        crash.history.unshift({ v: mult, won: true });
-      }
-    } catch (e) { fail(e); setCrashUi('Ошибка', 'crashed'); }
-    crash.history = crash.history.slice(0, 12);
-    renderCrashHistory();
-    crash.pending = false;
-    crashButtons(false);
-    loadMe().catch(() => {});
-  }
-
-  function crashEnd() {
-    crash.running = false;
-    cancelAnimationFrame(crash.raf);
-    $('crash-mult').textContent = crash.point.toFixed(2) + 'x';
-    setCrashUi(`КРАШ! Игра упала на ${crash.point.toFixed(2)}x`, 'crashed');
-    drawCrash('crashed');
-    haptic('error');
-    crash.history.unshift({ v: crash.point, won: false });
-    crash.history = crash.history.slice(0, 12);
-    renderCrashHistory();
-    crashButtons(false);
-    post('/api/crash/play', { amount: crashBetValue(), cashout: 0 }).catch(() => {}).then(() => loadMe().catch(() => {}));
-  }
-
-  // ---------- Кейсы, инвентарь, апгрейд ----------
-  const FILLERS = [
-    'https://i.imgur.com/G7XpkYs.png', 'https://i.imgur.com/0QWoP2i.png',
-    'https://i.imgur.com/7x8YDiz.png', 'https://i.imgur.com/BegS1KI.png', 'https://i.imgur.com/AQiM6I8.png',
-  ];
-  const IMG_FALLBACK = "this.onerror=null;this.style.opacity='.25'";
-
-  async function loadCases() {
-    try {
-      state.cases = await api('/api/cases');
-      $('cases-list').innerHTML = state.cases.map((c) => `
-        <div class="case-card">
-          <div class="case-img"><img src="${esc(c.image_url)}" alt="" onerror="${IMG_FALLBACK}"></div>
-          <div class="case-name">${esc(c.name)}</div>
-          <div class="case-price">${fmt(c.price)} PTS</div>
-          <button type="button" class="btn btn-primary btn-sm" data-action="case-open" data-id="${c.id}">Открыть</button>
-        </div>`).join('') || '<div class="empty">Кейсов пока нет</div>';
-    } catch (e) { $('cases-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
-  }
-
-  async function openCase(caseId) {
-    if (state.busy) return;
-    state.busy = true;
-    const strip = $('case-strip');
-    const resultText = $('case-result-text');
-    resultText.classList.add('hidden');
-    try {
-      const data = await post('/api/cases/open', { case_id: caseId });
-      show('case-result');
-      show('roulette');
-      const pool = FILLERS.concat(state.cases.map((c) => c.image_url).filter(Boolean));
-      const pick = () => pool[Math.floor(Math.random() * pool.length)];
-      const WIN = 30, ITEM = 84, GAP = 10;
-      const items = [];
-      for (let i = 0; i < WIN; i++) items.push(pick());
-      items.push(data.skin.image_url);
-      for (let i = 0; i < 6; i++) items.push(pick());
-      strip.innerHTML = items.map((src) => `<div class="r-item"><img src="${esc(src)}" alt="" onerror="${IMG_FALLBACK}"></div>`).join('');
-      strip.style.transition = 'none';
-      strip.style.transform = 'translateX(0)';
-      void strip.offsetWidth;
-      $('roulette').scrollIntoView({ behavior: 'smooth', block: 'center' });
-      const view = $('roulette').clientWidth;
-      const jitter = (Math.random() - 0.5) * 40;
-      const offset = WIN * (ITEM + GAP) + ITEM / 2 - view / 2 + jitter;
-      await sleep(60);
-      strip.style.transition = 'transform 4.2s cubic-bezier(.12,.7,.12,1)';
-      strip.style.transform = `translateX(-${offset}px)`;
-      haptic('medium');
-      await sleep(4400);
-      hide('roulette');
-      resultText.classList.remove('hidden');
-      resultText.innerHTML = `
-        <div class="tag">Тебе выпало</div>
-        <img src="${esc(data.skin.image_url)}" alt="" onerror="${IMG_FALLBACK}">
-        <div class="n">${esc(data.skin.name)}</div>
-        <div class="p">${fmt(data.skin.price)} PTS</div>`;
-      ok('Скин добавлен в инвентарь!');
-      await loadMe();
-      await loadInventory();
-    } catch (e) { fail(e); hide('case-result'); }
-    finally { state.busy = false; }
-  }
-
-  async function loadInventory() {
-    try {
-      state.inv = await api('/api/inventory');
-      $('inventory-list').innerHTML = state.inv.map((i) => `
-        <div class="inv-card r-${esc(i.rarity)}">
-          <div class="inv-top">
-            <img src="${esc(i.image_url)}" alt="" onerror="${IMG_FALLBACK}">
-            <div><div class="inv-name">${esc(i.name)}</div><div class="inv-price">${fmt(i.price)} PTS</div></div>
-          </div>
-          <div class="inv-actions">
-            <button type="button" class="btn btn-warn" data-action="inv-upgrade" data-inv="${i.inv_id}">Апгрейд</button>
-            <button type="button" class="btn btn-danger" data-action="inv-sell" data-inv="${i.inv_id}">Продать</button>
-          </div>
-        </div>`).join('') || '<div class="empty">В инвентаре пока пусто</div>';
-    } catch (e) { $('inventory-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
-  }
-
-  async function sellSkin(invId) {
-    const item = (state.inv || []).find((i) => i.inv_id === invId);
-    const res = await dialog({ title: 'Продать скин?', text: item ? `${item.name} — ${fmt(item.price)} PTS` : '', okText: 'Продать', danger: true });
-    if (!res) return;
-    try {
-      const d = await post('/api/inventory/sell', { inv_id: invId });
-      ok(d.message || 'Продано');
-      if (up.invId === invId) resetUpgrade();
-      await loadMe();
-      await loadInventory();
-    } catch (e) { fail(e); }
-  }
-
-  const up = { invId: null, chance: 20 };
-  function resetUpgrade() { up.invId = null; hide('upgrade-interface'); show('upgrade-hint'); }
-  function selectUpgrade(invId) {
-    const item = (state.inv || []).find((i) => i.inv_id === invId);
-    if (!item) return;
-    up.invId = invId;
-    $('upgrade-img-left').src = item.image_url;
-    $('upgrade-img-right').classList.add('hidden');
-    $('upgrade-q').classList.remove('hidden');
-    const r = $('upgrade-result-text');
-    r.textContent = ''; r.className = 'upgrade-result';
-    hide('upgrade-hint');
-    show('upgrade-interface');
-    $('btn-do-upgrade').disabled = false;
-    $('upgrade-interface').scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
-  async function doUpgrade() {
-    if (!up.invId) return toast('Выберите скин', 'err');
-    const btn = $('btn-do-upgrade');
-    const r = $('upgrade-result-text');
-    btn.disabled = true;
-    r.className = 'upgrade-result'; r.textContent = 'Крутим…';
-    try {
-      const d = await post('/api/upgrade', { inv_id: up.invId, chance: up.chance });
-      if (d.target_skin && d.target_skin.image_url) {
-        $('upgrade-img-right').src = d.target_skin.image_url;
-        $('upgrade-img-right').classList.remove('hidden');
-        $('upgrade-q').classList.add('hidden');
-      }
-      if (d.success) { r.className = 'upgrade-result ok'; r.textContent = `УСПЕХ! Вы получили ${d.target_skin.name}`; haptic('success'); }
-      else { r.className = 'upgrade-result fail'; r.textContent = 'НЕУДАЧА. Скин сгорел.'; haptic('error'); }
-      up.invId = null;
-      await loadInventory();
-    } catch (e) { fail(e); r.textContent = ''; btn.disabled = false; }
-  }
+  // Краш, кейсы, инвентарь и апгрейд вынесены в /web/games.js и /web/extra.js (новые честные версии)
 
   // ---------- Промокод ----------
   async function activatePromo() {
@@ -639,11 +379,6 @@
         users.map((u) => `<option value="${esc(u.user_id)}">${esc(u.first_name || 'Без имени')} (@${esc(u.username || u.user_id)})</option>`).join('');
       $('drop-user-id').innerHTML = opts;
       $('settings-user-id').innerHTML = opts;
-    } catch (_) {}
-    try {
-      const skins = await api('/api/admin/all-skins');
-      $('force-skin-select').innerHTML = '<option value="">Случайный скин</option>' +
-        skins.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} — ${fmt(s.price)} PTS</option>`).join('');
     } catch (_) {}
   }
 
@@ -676,6 +411,7 @@
           <button type="button" class="btn btn-ghost btn-sm" data-action="settle" data-id="${e.id}" data-result="1">П1</button>
           <button type="button" class="btn btn-ghost btn-sm" data-action="settle" data-id="${e.id}" data-result="X">X</button>
           <button type="button" class="btn btn-ghost btn-sm" data-action="settle" data-id="${e.id}" data-result="2">П2</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-action="settle" data-id="${e.id}" data-result="void">Возврат</button>
         </div>
       </div>`).join('') || '<div class="empty">Нет матчей</div>';
   }
@@ -730,10 +466,6 @@
     const r = await post('/api/admin/broadcast', { text });
     ok(r.message); f.reset();
   });
-  bindForm('user-settings-form', async () => {
-    const r = await post('/api/admin/user-settings', { user_id: Number($('settings-user-id').value), forced_skin_id: $('force-skin-select').value, custom_chance: Number($('custom-chance').value) });
-    ok(r.message);
-  });
   bindForm('admin-event-form', async (f) => {
     await post('/api/admin/create-event', {
       sport: $('admin-sport').value, title: $('admin-title').value,
@@ -749,15 +481,16 @@
   // ---------- Навигация ----------
   async function showTab(name) {
     $$('.panel').forEach((p) => p.classList.toggle('hidden', p.id !== name));
-    $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+    const PARENT = { crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', nards: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', rating: 'profile' };
+    $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === (PARENT[name] || name)));
+    if (window.MSP && MSP.leave) MSP.leave(name);
     window.scrollTo({ top: 0 });
     try {
       if (name === 'matches') await loadEvents();
-      if (name === 'crash') { renderCrashHistory(); requestAnimationFrame(() => drawCrash(crash.running ? 'live' : 'idle')); }
       if (name === 'history') await loadHistory();
       if (name === 'rating') await loadRating();
       if (name === 'news') await loadNews();
-      if (name === 'cases') { await loadCases(); await loadInventory(); }
+      if (window.MSP && MSP.tabs[name]) await MSP.tabs[name]();
       if (name === 'admin') { await loadAdminUsers(); await loadEvents(); loadSettle(); loadBetsReport(); }
     } catch (e) { fail(e); }
   }
@@ -794,23 +527,6 @@
     'bet-backdrop'(el, e) { if (e.target === el) hide('bet-modal'); },
     share: shareBet,
     'news-open'(el) { const n = (state.news || [])[Number(el.dataset.idx)]; if (n) openLink(n.link); },
-    'crash-start': startCrash,
-    'crash-cashout': cashoutCrash,
-    'crash-bet'(el) {
-      if (crash.running) return;
-      const cur = crashBetValue() || 1;
-      const bal = Math.floor((state.me && state.me.balance) || cur);
-      const op = el.dataset.op;
-      $('crash-bet').value = Math.max(1, op === 'half' ? Math.floor(cur / 2) : op === 'double' ? Math.min(cur * 2, bal) : bal);
-    },
-    'case-open'(el) { openCase(Number(el.dataset.id)); },
-    'inv-upgrade'(el) { selectUpgrade(Number(el.dataset.inv)); },
-    'inv-sell'(el) { sellSkin(Number(el.dataset.inv)); },
-    chance(el) {
-      up.chance = Number(el.dataset.chance);
-      $$('.chance-btn').forEach((b) => b.classList.toggle('active', b === el));
-    },
-    'do-upgrade': doUpgrade,
     'bets-report': loadBetsReport,
     'odds-edit'(el) { editOdds(Number(el.dataset.id)); },
     toggle(el) { toggleEvent(Number(el.dataset.id)); },
@@ -822,12 +538,24 @@
     if (tab) { showTab(tab.dataset.tab); return; }
     const el = e.target.closest('[data-action]');
     if (el && actions[el.dataset.action]) actions[el.dataset.action](el, e);
+    else if (el && window.MSP && MSP.actions[el.dataset.action]) MSP.actions[el.dataset.action](el, e);
   });
 
   $('slip-amount').addEventListener('input', updateSlipWin);
   $('express-amount').addEventListener('input', updateExpressWin);
   $('btn-promo').addEventListener('click', activatePromo);
-  window.addEventListener('resize', () => { if (!$('crash').classList.contains('hidden')) drawCrash(crash.running ? 'live' : 'idle'); });
+
+  // ---------- Мост для новых модулей (extra.js, games.js) ----------
+  window.MSP = {
+    tg, api, post, toast, ok, fail, dialog, fmt, esc, haptic, sleep, state, showTab, loadMe, animateBalance, openLink,
+    renderEvents, loadEvents, tabs: {}, actions: {},
+    watchToggle: async (id) => {
+      const ev = state.events.find((e) => e.id === id); if (!ev) return;
+      const on = !(state.watch && state.watch.has(id));
+      const choices = ['1'].concat(ev.odds_x ? ['X'] : [], ['2']);
+      try { for (const c of choices) await post('/api/v2/watch', { event_id: id, choice: c, on }); on ? state.watch.add(id) : state.watch.delete(id); ok(on ? 'Подписка включена: напишем в бота, если кэф вырастет' : 'Подписка отключена'); renderEvents(); } catch (e) { fail(e); }
+    },
+  };
 
   // ---------- Старт ----------
   (async () => {

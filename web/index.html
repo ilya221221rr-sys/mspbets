@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/web/style.css">
+  <link rel="stylesheet" href="/web/extra.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -92,78 +93,7 @@
         <div id="event-list"></div>
       </section>
 
-      <!-- КРАШ -->
-      <section id="crash" class="panel hidden">
-        <div class="panel-head">
-          <h2>Краш</h2>
-          <p>Множитель растёт — успей забрать, пока он не упал.</p>
-        </div>
-
-        <div class="crash-card">
-          <div class="crash-history" id="crash-history"></div>
-          <div class="crash-stage">
-            <canvas id="crash-canvas"></canvas>
-            <div class="crash-center">
-              <div class="crash-mult" id="crash-mult">1.00x</div>
-              <div class="crash-status" id="crash-status">Сделай ставку и жми «Старт»</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <label class="label" for="crash-bet">Ставка, PTS</label>
-          <div class="amount-row">
-            <input id="crash-bet" class="input" type="number" min="1" value="100" inputmode="numeric">
-            <button class="chip" type="button" data-action="crash-bet" data-op="half">½</button>
-            <button class="chip" type="button" data-action="crash-bet" data-op="double">×2</button>
-            <button class="chip" type="button" data-action="crash-bet" data-op="max">MAX</button>
-          </div>
-          <div class="btn-row">
-            <button id="crash-start-btn" class="btn btn-primary" type="button" data-action="crash-start">Старт</button>
-            <button id="crash-cashout-btn" class="btn btn-warn" type="button" data-action="crash-cashout" disabled>Забрать</button>
-          </div>
-        </div>
-      </section>
-
-      <!-- КЕЙСЫ -->
-      <section id="cases" class="panel hidden">
-        <div class="panel-head">
-          <h2>Кейсы</h2>
-          <p>Открывай кейсы, собирай скины и улучшай их.</p>
-        </div>
-        <div id="cases-list" class="grid-2"></div>
-
-        <div id="case-result" class="hidden">
-          <div class="roulette" id="roulette">
-            <div class="roulette-track" id="case-strip"></div>
-            <div class="roulette-pointer" id="case-pointer"></div>
-          </div>
-          <div id="case-result-text" class="drop-card hidden"></div>
-        </div>
-
-        <div class="sub-head">Улучшить скин</div>
-        <div id="upgrade-hint" class="muted-note">Выбери скин в инвентаре и нажми «Апгрейд».</div>
-        <div id="upgrade-interface" class="card hidden">
-          <div class="upgrade-row">
-            <div class="up-slot"><img id="upgrade-img-left" src="" alt=""></div>
-            <div class="up-arrow"><svg class="ico"><use href="#i-bolt"/></svg></div>
-            <div class="up-slot up-slot-target">
-              <span class="up-q" id="upgrade-q">?</span>
-              <img id="upgrade-img-right" class="hidden" src="" alt="">
-            </div>
-          </div>
-          <div class="chance-row">
-            <button class="chance-btn active" type="button" data-action="chance" data-chance="20">x5 <small>20%</small></button>
-            <button class="chance-btn" type="button" data-action="chance" data-chance="30">x3 <small>30%</small></button>
-            <button class="chance-btn" type="button" data-action="chance" data-chance="50">x2 <small>50%</small></button>
-          </div>
-          <button id="btn-do-upgrade" class="btn btn-primary btn-block" type="button" data-action="do-upgrade">Улучшить</button>
-          <div id="upgrade-result-text" class="upgrade-result"></div>
-        </div>
-
-        <div class="sub-head">Инвентарь</div>
-        <div id="inventory-list" class="grid-2"></div>
-      </section>
+      <!-- Игры, кейсы, бонусы, профиль и т.д. создаются из /web/extra.js и /web/games.js -->
 
       <!-- ИСТОРИЯ -->
       <section id="history" class="panel hidden">
@@ -251,18 +181,6 @@
         </details>
 
         <details class="acc">
-          <summary>Настройки игрока (дроп и апгрейд)</summary>
-          <form id="user-settings-form" class="acc-body">
-            <select id="settings-user-id" class="input" required><option value="" disabled selected>Выберите игрока...</option></select>
-            <label class="label" for="force-skin-select">Скин, который выпадет в следующем кейсе</label>
-            <select id="force-skin-select" class="input"><option value="">Случайный скин</option></select>
-            <label class="label" for="custom-chance">Шанс апгрейда для игрока (%)</label>
-            <input id="custom-chance" class="input" type="number" min="1" max="100" value="10">
-            <button class="btn btn-primary" type="submit">Сохранить настройки</button>
-          </form>
-        </details>
-
-        <details class="acc">
           <summary>Рассылка всем игрокам</summary>
           <form id="admin-broadcast-form" class="acc-body">
             <textarea id="broadcast-text" class="input" placeholder="Текст сообщения для всех игроков..." required rows="4"></textarea>
@@ -286,11 +204,10 @@
   <!-- НИЖНЯЯ НАВИГАЦИЯ -->
   <nav class="bottom-nav" aria-label="Разделы">
     <button class="nav-btn active" type="button" data-tab="matches"><svg class="ico"><use href="#i-matches"/></svg><span>Матчи</span></button>
-    <button class="nav-btn" type="button" data-tab="crash"><svg class="ico"><use href="#i-crash"/></svg><span>Краш</span></button>
+    <button class="nav-btn" type="button" data-tab="games"><svg class="ico"><use href="#i-crash"/></svg><span>Игры</span></button>
     <button class="nav-btn" type="button" data-tab="cases"><svg class="ico"><use href="#i-cases"/></svg><span>Кейсы</span></button>
-    <button class="nav-btn" type="button" data-tab="history"><svg class="ico"><use href="#i-history"/></svg><span>История</span></button>
-    <button class="nav-btn" type="button" data-tab="news"><svg class="ico"><use href="#i-news"/></svg><span>Новости</span></button>
-    <button class="nav-btn" type="button" data-tab="rating"><svg class="ico"><use href="#i-rating"/></svg><span>Топ</span></button>
+    <button class="nav-btn" type="button" data-tab="bonus"><svg class="ico"><use href="#i-gift"/></svg><span>Бонусы</span><i class="nav-dot hidden" id="dot-bonus"></i></button>
+    <button class="nav-btn" type="button" data-tab="profile"><svg class="ico"><use href="#i-rating"/></svg><span>Профиль</span></button>
   </nav>
 
   <!-- ЭКСПРЕСС-КУПОН -->
@@ -382,5 +299,7 @@
 
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/web/app.js"></script>
+  <script src="/web/extra.js"></script>
+  <script src="/web/games.js"></script>
 </body>
 </html>

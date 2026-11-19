@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import libsql
+import extras
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -174,6 +175,9 @@ def ensure_user(user):
 # --- БОТ ---
 @dp.message(Command("start"))
 async def start_message(message: Message):
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) > 1 and message.from_user:
+        await extras.handle_start(message.from_user, parts[1].strip())  # /start ref_<id>
     if not BOT_WEBAPP_URL: return
     await message.answer(
         "🏆 <b>MSPBETS</b>\n\n"
@@ -218,12 +222,17 @@ async def cmd_broadcast(message: Message):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    await extras.startup()  # новые игры, кейсы, краш, автозагрузка матчей (extras/)
     if bot and BOT_WEBAPP_URL and WEBHOOK_SECRET:
         await bot.set_webhook(f"{BOT_WEBAPP_URL}/telegram/webhook", secret_token=WEBHOOK_SECRET, drop_pending_updates=True)
     yield
+    await extras.shutdown()
     if bot: await bot.session.close()
 
 app = FastAPI(title="MSPBETS API", lifespan=lifespan)
+extras.setup(get_db=get_db, validate=validate_init_data, bot=bot, admin_ids=ADMIN_IDS,
+             webapp_url=BOT_WEBAPP_URL, bot_username=os.getenv("BOT_USERNAME", "mspbetsbot"))
+extras.register(app)
 app.mount("/web", StaticFiles(directory="web"), name="web")
 
 @app.get("/")
@@ -252,46 +261,41 @@ async def me(request: Request):
 async def get_rating(request: Request):
     await current_user(request)
     conn = get_db()
-    cur = conn.execute("SELECT first_name, username, balance FROM users ORDER BY balance DESC LIMIT 50")
+    cur = conn.execute("""SELECT u.first_name, u.username, u.balance, u.user_id, COALESCE(p.xp, 0), COALESCE(p.frame, '')
+        FROM users u LEFT JOIN profiles p ON p.user_id = u.user_id ORDER BY u.balance DESC LIMIT 50""")
     rows = cur.fetchall()
     conn.close()
-    return [{"first_name": r[0], "username": r[1], "balance": r[2]} for r in rows]
+    return [{"first_name": r[0], "username": r[1], "balance": r[2], "user_id": r[3],
+             "level": extras.core.level_for(r[4]), "frame": r[5]} for r in rows]
 
 @app.get("/api/events")
 async def events(request: Request):
     user = await current_user(request)
     ensure_user(user)
     conn = get_db()
-    cur = conn.execute("SELECT id, sport, title, status, odds_1, odds_x, odds_2 FROM events ORDER BY CASE WHEN status='open' THEN 0 ELSE 1 END, id DESC")
+    cur = conn.execute("""SELECT e.id, e.sport, e.title, e.status, e.odds_1, e.odds_x, e.odds_2, e.starts_at, f.league
+        FROM events e LEFT JOIN feed_events f ON f.event_id = e.id
+        WHERE e.status <> 'settled' OR e.id IN (SELECT id FROM events WHERE status='settled' ORDER BY id DESC LIMIT 30)
+        ORDER BY CASE WHEN e.status='open' THEN 0 ELSE 1 END, CASE WHEN e.starts_at IS NULL THEN 0 ELSE 1 END,
+                 COALESCE(e.starts_at, ''), e.id DESC""")
     rows = cur.fetchall()
     conn.close()
-    return [{"id": r[0], "sport": r[1], "title": r[2], "status": r[3], "odds_1": r[4], "odds_x": r[5], "odds_2": r[6]} for r in rows]
+    return [{"id": r[0], "sport": r[1], "title": r[2], "status": r[3], "odds_1": r[4], "odds_x": r[5], "odds_2": r[6],
+             "starts_at": r[7], "league": r[8]} for r in rows]
 
 @app.post("/api/predict")
 async def predict(request: Request):
     user = await current_user(request)
     uid = ensure_user(user)
     body = await request.json()
-    event_id = int(body["event_id"]); points = int(body["points"]); choice = str(body["choice"])
-    
-    conn = get_db()
-    cur = conn.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-    row = cur.fetchone()
-    cur = conn.execute("SELECT status, odds_1, odds_x, odds_2 FROM events WHERE id=?", (event_id,))
-    event = cur.fetchone()
-    
-    if not event or event[0] != "open": raise HTTPException(400, "Закрыто")
-    odds_map = {"1": event[1], "X": event[2], "2": event[3]}
-    locked_odds = odds_map.get(choice)
-    if not locked_odds: raise HTTPException(400, "Неверный исход")
-    if row[0] < points: raise HTTPException(400, "Мало баллов")
-    
-    conn.execute("INSERT INTO predictions (user_id, event_id, choice, points, locked_odds, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                 (uid, event_id, choice, points, locked_odds, datetime.now(timezone.utc).isoformat()))
-    conn.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (points, uid))
-    conn.commit()
-    conn.close()
-    return {"ok": True}
+    try:
+        event_id = int(body["event_id"]); points = int(body["points"]); choice = str(body["choice"])
+    except Exception:
+        raise HTTPException(400, "Неверные данные")
+    # ставка, списание, журнал, XP, задания — extras/betting.py
+    with extras.core.user_lock(uid), extras.core.db() as conn:
+        extras.betting.place_single(conn, uid, event_id, choice, points)
+    return {"ok": True, "unlocked": extras.core.pop_unlocked()}
 
 @app.post("/api/calc-win")
 async def calc_win(request: Request):
@@ -317,43 +321,13 @@ async def express_bet(request: Request):
     user = await current_user(request)
     uid = ensure_user(user)
     body = await request.json()
-    amount = int(body.get("amount", 0))
-    items = body.get("items", [])
-    
-    if amount < 1 or len(items) < 2: raise HTTPException(400, "Мин. 2 события и сумма > 0")
-    
-    conn = get_db()
-    cur = conn.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-    row = cur.fetchone()
-    if not row or row[0] < amount: raise HTTPException(400, "Мало баллов")
-    
-    total_odds = 1.0
-    for item in items:
-        ev_id = int(item["event_id"]); choice = str(item["choice"])
-        cur = conn.execute("SELECT status, odds_1, odds_x, odds_2 FROM events WHERE id=?", (ev_id,))
-        ev = cur.fetchone()
-        if not ev or ev[0] != "open": raise HTTPException(400, f"Событие {ev_id} закрыто")
-        odds_map = {"1": ev[1], "X": ev[2], "2": ev[3]}
-        locked_odds = odds_map.get(choice)
-        if not locked_odds: raise HTTPException(400, f"Неверный исход в {ev_id}")
-        total_odds *= locked_odds
-    
-    conn.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (amount, uid))
-    cur = conn.execute("INSERT INTO bets (user_id, amount, total_odds, created_at) VALUES (?, ?, ?, ?)",
-                       (uid, amount, total_odds, datetime.now(timezone.utc).isoformat()))
-    bet_id = cur.lastrowid
-    
-    for item in items:
-        ev_id = int(item["event_id"]); choice = str(item["choice"])
-        cur = conn.execute("SELECT odds_1, odds_x, odds_2 FROM events WHERE id=?", (ev_id,))
-        ev = cur.fetchone()
-        locked_odds = {"1": ev[0], "X": ev[1], "2": ev[2]}.get(choice)
-        conn.execute("INSERT INTO bet_events (bet_id, event_id, choice, locked_odds) VALUES (?, ?, ?, ?)",
-                     (bet_id, ev_id, choice, locked_odds))
-        
-    conn.commit()
-    conn.close()
-    return {"ok": True, "message": f"Экспресс принят. Общий кф: {round(total_odds, 2)}"}
+    try:
+        amount = int(body.get("amount", 0)); items = body.get("items", [])
+    except Exception:
+        raise HTTPException(400, "Неверные данные")
+    with extras.core.user_lock(uid), extras.core.db() as conn:
+        res = extras.betting.place_express(conn, uid, amount, items)
+    return {"ok": True, "message": f"Экспресс принят. Общий кф: {round(res['total_odds'], 2)}", "unlocked": extras.core.pop_unlocked()}
 
 @app.get("/api/history")
 async def get_history(request: Request):
@@ -401,144 +375,7 @@ async def get_bet_detail(bet_id: int, request: Request):
         "points": row[3], "odds": row[4], "status": row[5], "created_at": row[6]
     }
 
-@app.post("/api/crash/play")
-async def play_crash(request: Request):
-    user = await current_user(request)
-    uid = ensure_user(user)
-    body = await request.json()
-    bet = int(body.get("amount", 0)); cashout = float(body.get("cashout", 0)) 
-    if bet < 1: raise HTTPException(400, "Мин. ставка 1")
-    
-    rand = random.random()
-    crash_point = round(random.uniform(1.0, 1.5), 2) if rand < 0.5 else round(random.uniform(1.5, 15.0), 2)
-    
-    conn = get_db()
-    cur = conn.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-    row = cur.fetchone()
-    if not row or row[0] < bet: raise HTTPException(400, "Мало баллов")
-    
-    conn.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (bet, uid))
-    win_amount = 0
-    if cashout > 0 and cashout <= crash_point:
-        win_amount = int(bet * cashout)
-        conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (win_amount, uid))
-        
-    conn.execute("INSERT INTO crash_history (user_id, bet_amount, multiplier, win_amount, created_at) VALUES (?,?,?,?,?)", 
-                 (uid, bet, crash_point, win_amount, datetime.now(timezone.utc).isoformat()))
-    conn.commit()
-    conn.close()
-    return {"ok": True, "crash_point": crash_point, "win": win_amount > 0, "win_amount": win_amount}
-
-@app.get("/api/cases")
-async def get_cases(request: Request):
-    await current_user(request)
-    conn = get_db()
-    cur = conn.execute("SELECT id, name, price, image_url FROM cases")
-    rows = cur.fetchall()
-    conn.close()
-    return [{"id": r[0], "name": r[1], "price": r[2], "image_url": r[3]} for r in rows]
-
-@app.post("/api/cases/open")
-async def open_case(request: Request):
-    user = await current_user(request)
-    uid = ensure_user(user)
-    body = await request.json()
-    case_id = int(body.get("case_id", 0))
-    
-    conn = get_db()
-    cur = conn.execute("SELECT price FROM cases WHERE id=?", (case_id,))
-    case = cur.fetchone()
-    cur = conn.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-    row = cur.fetchone()
-    if not row or row[0] < case[0]: raise HTTPException(400, "Мало баллов")
-    
-    cur = conn.execute("SELECT forced_skin_id FROM user_settings WHERE user_id=?", (uid,))
-    forced = cur.fetchone()
-    
-    if forced and forced[0]:
-        cur = conn.execute("SELECT id, name, image_url, price FROM skins WHERE id=?", (forced[0],))
-        skin = cur.fetchone()
-        conn.execute("UPDATE user_settings SET forced_skin_id=NULL WHERE user_id=?", (uid,))
-    else:
-        roll = random.randint(1, 100)
-        rarity = "Common" if roll <= 60 else "Rare" if roll <= 85 else "Immortal"
-        cur = conn.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=? AND rarity=?", (case_id, rarity))
-        skins = cur.fetchall()
-        if not skins:
-            cur = conn.execute("SELECT id, name, image_url, price FROM skins WHERE case_id=?", (case_id,))
-            skins = cur.fetchall()
-        skin = random.choice(skins)
-    
-    conn.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (case[0], uid))
-    conn.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", (uid, skin[0], datetime.now(timezone.utc).isoformat()))
-    conn.commit()
-    conn.close()
-    return {"ok": True, "skin": {"id": skin[0], "name": skin[1], "image_url": skin[2], "price": skin[3]}}
-
-@app.get("/api/inventory")
-async def inventory(request: Request):
-    user = await current_user(request)
-    uid = ensure_user(user)
-    conn = get_db()
-    cur = conn.execute("""
-        SELECT i.id, s.name, s.image_url, s.price, s.rarity
-        FROM inventory i JOIN skins s ON i.skin_id = s.id 
-        WHERE i.user_id=? AND i.status='owned' ORDER BY s.price DESC
-    """, (uid,))
-    rows = cur.fetchall()
-    conn.close()
-    return [{"inv_id": r[0], "name": r[1], "image_url": r[2], "price": r[3], "rarity": r[4]} for r in rows]
-
-@app.post("/api/inventory/sell")
-async def sell_skin(request: Request):
-    user = await current_user(request)
-    uid = ensure_user(user)
-    inv_id = int((await request.json()).get("inv_id", 0))
-    conn = get_db()
-    cur = conn.execute("SELECT s.price, s.name FROM inventory i JOIN skins s ON i.skin_id = s.id WHERE i.id=? AND i.user_id=? AND i.status='owned'", (inv_id, uid))
-    item = cur.fetchone()
-    if not item: raise HTTPException(400, "Скин не найден")
-    conn.execute("UPDATE inventory SET status='sold' WHERE id=?", (inv_id,))
-    conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (int(item[0]), uid))
-    conn.commit()
-    conn.close()
-    return {"ok": True, "message": f"Скин продан за {int(item[0])} PTS"}
-
-@app.post("/api/upgrade")
-async def upgrade_skin(request: Request):
-    user = await current_user(request)
-    uid = ensure_user(user)
-    body = await request.json()
-    inv_id = int(body.get("inv_id", 0)); chosen_chance = float(body.get("chance", 20)) 
-    
-    conn = get_db()
-    cur = conn.execute("SELECT custom_upgrade_chance FROM user_settings WHERE user_id=?", (uid,))
-    settings = cur.fetchone()
-    real_chance = settings[0] if settings and settings[0] else 10.0
-    
-    cur = conn.execute("SELECT s.id, s.price, s.name, s.image_url, s.rarity FROM inventory i JOIN skins s ON i.skin_id = s.id WHERE i.id=? AND i.user_id=? AND i.status='owned'", (inv_id, uid))
-    current_skin = cur.fetchone()
-    if not current_skin: raise HTTPException(400, "Скин не найден")
-        
-    ideal_price = current_skin[1] / (chosen_chance / 100.0)
-    cur = conn.execute("SELECT id, name, image_url, price, rarity FROM skins WHERE price > ? ORDER BY ABS(price - ?) ASC LIMIT 1", (current_skin[1], ideal_price))
-    target_skin = cur.fetchone()
-    if not target_skin:
-        cur = conn.execute("SELECT id, name, image_url, price, rarity FROM skins ORDER BY price DESC LIMIT 1")
-        target_skin = cur.fetchone()
-        
-    success = random.uniform(0, 100) <= real_chance
-    if success:
-        conn.execute("UPDATE inventory SET status='upgraded' WHERE id=?", (inv_id,))
-        conn.execute("INSERT INTO inventory(user_id, skin_id, created_at) VALUES(?,?,?)", (uid, target_skin[0], datetime.now(timezone.utc).isoformat()))
-        conn.commit()
-        conn.close()
-        return {"ok": True, "success": True, "old_skin": {"name": current_skin[2], "image_url": current_skin[3]}, "target_skin": {"name": target_skin[1], "image_url": target_skin[2]}}
-    else:
-        conn.execute("UPDATE inventory SET status='lost' WHERE id=?", (inv_id,))
-        conn.commit()
-        conn.close()
-        return {"ok": True, "success": False, "old_skin": {"name": current_skin[2], "image_url": current_skin[3]}, "target_skin": {"name": target_skin[1], "image_url": target_skin[2]}}
+# Краш, кейсы, инвентарь и апгрейд теперь в extras/ (/api/v2/...): честная математика, журнал операций.
 
 # --- АДМИНКА ---
 @app.post("/api/admin/give-points")
@@ -556,7 +393,7 @@ async def give_points(request: Request):
     if not u_row: raise HTTPException(404, "Игрок не найден")
     
     final_amount = amount if action == "add" else -amount
-    conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (final_amount, u_row[0]))
+    extras.core.adjust(conn, u_row[0], final_amount, "admin", "Админ: начисление" if final_amount > 0 else "Админ: списание", ref=str(uid))
     conn.commit()
     conn.close()
     return {"ok": True, "message": f"Успешно! {action} {amount} баллов"}
@@ -566,10 +403,13 @@ async def admin_update_odds(event_id: int, request: Request):
     user = await current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     body = await request.json()
-    conn = get_db()
-    conn.execute("UPDATE events SET odds_1=?, odds_x=?, odds_2=? WHERE id=?", (body["o1"], body.get("ox"), body["o2"], event_id))
-    conn.commit()
-    conn.close()
+    o1, ox, o2 = float(body["o1"]), body.get("ox"), float(body["o2"])
+    ox = float(ox) if ox else None
+    if o1 < 1.01 or o2 < 1.01 or (ox is not None and ox < 1.01):
+        raise HTTPException(400, "Коэффициент должен быть не меньше 1.01")
+    with extras.core.db() as conn:
+        conn.execute("UPDATE events SET odds_1=?, odds_x=?, odds_2=? WHERE id=?", (o1, ox, o2, event_id))
+        extras.core.notify_many(conn, extras.betting.odds_changed(conn, event_id, (o1, ox, o2)))  # «коэффициент вырос»
     return {"ok": True, "message": "Коэффициенты обновлены!"}
 
 @app.post("/api/admin/toggle-event/{event_id}")
@@ -662,58 +502,11 @@ async def admin_create_event(request: Request):
 async def settle_event(event_id: int, request: Request):
     user = await current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    result = str((await request.json()).get("result", ""))
-    conn = get_db()
-    conn.execute("UPDATE events SET status='settled', result=? WHERE id=?", (result, event_id))
-    
-    cur = conn.execute("SELECT user_id, points, choice, locked_odds FROM predictions WHERE event_id=? AND status='pending'", (event_id,))
-    for p in cur.fetchall():
-        if p[2] == result:
-            reward = int(p[1] * p[3])
-            conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (reward, p[0]))
-            conn.execute("UPDATE predictions SET status='won' WHERE user_id=? AND event_id=?", (p[0], event_id))
-        else:
-            conn.execute("UPDATE predictions SET status='lost' WHERE user_id=? AND event_id=?", (p[0], event_id))
-            
-    cur = conn.execute("SELECT bet_id, choice FROM bet_events WHERE event_id=?", (event_id,))
-    bet_items = cur.fetchall()
-    for bi in bet_items:
-        bet_id = bi[0]; bet_choice = bi[1]
-        
-        if bet_choice != result:
-            conn.execute("UPDATE bets SET status='lost' WHERE id=?", (bet_id,))
-            continue
-            
-        cur2 = conn.execute("""
-            SELECT be.choice, e.status, e.result 
-            FROM bet_events be 
-            JOIN events e ON be.event_id = e.id 
-            WHERE be.bet_id = ?
-        """, (bet_id,))
-        evs = cur2.fetchall()
-        
-        all_correct = True
-        all_settled = True
-        
-        for e_choice, e_status, e_result in evs:
-            if e_status == 'settled' and e_choice != e_result:
-                all_correct = False
-                break
-            if e_status == 'open' or e_status == 'closed':
-                all_settled = False
-                
-        if not all_correct:
-            conn.execute("UPDATE bets SET status='lost' WHERE id=?", (bet_id,))
-        elif all_settled:
-            cur3 = conn.execute("SELECT user_id, amount, total_odds FROM bets WHERE id=?", (bet_id,))
-            b = cur3.fetchone()
-            reward = int(b[1] * b[2])
-            conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (reward, b[0]))
-            conn.execute("UPDATE bets SET status='won' WHERE id=?", (bet_id,))
-                
-    conn.commit()
-    conn.close()
-    return {"ok": True}
+    result = str((await request.json()).get("result", ""))  # "1" | "X" | "2" | "void" (отмена)
+    with extras.core.db() as conn:
+        notes = extras.betting.settle_event_core(conn, event_id, result)  # выплаты + журнал + задания
+        extras.core.notify_many(conn, notes)                              # «ставка сыграла» в бота
+    return {"ok": True, "notified": len(notes)}
 
 @app.get("/api/admin/bets-report")
 async def admin_bets_report(request: Request):
@@ -810,7 +603,7 @@ async def activate_promo(request: Request):
     cur = conn.execute("SELECT 1 FROM promo_uses WHERE user_id=? AND code=?", (uid, code))
     if cur.fetchone(): raise HTTPException(400, "Уже активирован")
     conn.execute("INSERT INTO promo_uses (user_id, code) VALUES (?,?)", (uid, code))
-    conn.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (promo[0], uid))
+    extras.core.adjust(conn, uid, promo[0], "promo", f"Промокод {code}", ref=code)
     conn.commit()
     conn.close()
     return {"ok": True, "message": f"+{promo[0]} баллов!"}
