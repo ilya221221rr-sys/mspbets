@@ -66,8 +66,7 @@ img { display: block; max-width: 100%; }
   position: sticky; top: 0; z-index: 100;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
-  background: rgba(9, 10, 18, .78);
-  -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+  background: rgba(9, 10, 18, .96); /* без backdrop-filter: размытие липкой шапки пересчитывалось на каждом кадре скролла */
   border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -154,7 +153,8 @@ img { display: block; max-width: 100%; }
 /* ---------- Карточка матча ---------- */
 .match {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
-  padding: 14px; margin-bottom: 12px; animation: fadeUp .3s ease both;
+  padding: 14px; margin-bottom: 12px;
+  content-visibility: auto; contain-intrinsic-size: auto 190px; /* карточки вне экрана не рендерятся */
 }
 .match-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .sport-badge {
@@ -222,7 +222,7 @@ select.input option { background: var(--surface); }
   position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 500;
   width: 100%; max-width: 520px; display: grid; grid-template-columns: repeat(6, 1fr);
   padding: 6px 6px calc(var(--safe-b) + 6px);
-  background: rgba(14, 16, 32, .88); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  background: rgba(14, 16, 32, .97);
   border-top: 1px solid var(--line-2);
 }
 .nav-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 2px; border-radius: 12px; color: var(--muted); font-size: 10.5px; font-weight: 700; transition: color .2s; }
@@ -262,7 +262,7 @@ select.input option { background: var(--surface); }
 /* ---------- Модальные окна ---------- */
 .modal {
   position: fixed; inset: 0; z-index: 2000; display: flex; align-items: flex-end; justify-content: center;
-  background: rgba(5, 6, 12, .72); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  background: rgba(5, 6, 12, .82);
   animation: fade .2s ease both; overflow-y: auto;
 }
 .modal-center { align-items: center; padding: 20px; }

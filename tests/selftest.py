@@ -282,4 +282,36 @@ with TestClient(A.app) as c:
     check("статус фида для админа", adm.get("/api/v2/admin/feed/status").status_code == 200)
     check("статус фида недоступен игроку", u.get("/api/v2/admin/feed/status").status_code == 403)
 
+    print("\n== оптимизация: окно матчей 24 ч, пул соединений, кэш")
+    from datetime import datetime, timedelta, timezone
+    iso = lambda h: (datetime.now(timezone.utc) + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    with core.db() as conn:
+        ids = {}
+        for tag, st, h in (("soon", "open", 5), ("far", "open", 30), ("started", "open", -1), ("closed_soon", "closed", 3)):
+            ids[tag] = conn.execute("INSERT INTO events (sport,title,starts_at,status,odds_1,odds_x,odds_2,created_at) VALUES ('Футбол',?,?,?,2,3,2,?)",
+                                    (f"W-{tag} — X", iso(h), st, core.now_iso())).lastrowid
+        ids["manual"] = conn.execute("INSERT INTO events (sport,title,status,odds_1,odds_x,odds_2,created_at) VALUES ('Футбол','W-manual — X','open',2,3,2,?)", (core.now_iso(),)).lastrowid
+    A.invalidate_events()
+    pub = {e["title"].split(" — ")[0] for e in u.get("/api/events").json()}
+    check("матч через 5 ч виден", "W-soon" in pub, pub)
+    check("ручной матч без даты виден", "W-manual" in pub)
+    check("матч через 30 ч скрыт", "W-far" not in pub)
+    check("начавшийся матч скрыт", "W-started" not in pub)
+    check("закрытый матч скрыт у игрока", "W-closed_soon" not in pub)
+    adm_all = {e["title"].split(" — ")[0] for e in adm.get("/api/events?all=1").json()}
+    check("админ видит всё через ?all=1", {"W-far", "W-started", "W-closed_soon"} <= adm_all, adm_all)
+    check("игрок не получает all=1", "W-far" not in {e["title"].split(" — ")[0] for e in u.get("/api/events?all=1").json()})
+    import time as _t
+    t0 = _t.time(); [u.get("/api/events") for _ in range(30)]; dt = (_t.time() - t0) / 30
+    check(f"/api/events из кэша быстро ({dt*1000:.1f} мс)", dt < 0.05)
+    # пул: соединение переиспользуется, а «грязное» (без commit) — нет
+    c1 = A.get_db(); raw1 = c1._c; c1.execute("SELECT 1").fetchone(); c1.close()
+    c2 = A.get_db(); check("пул переиспользует соединение", c2._c is raw1); 
+    c2.execute("CREATE TABLE IF NOT EXISTS _pool_t (a)"); c2.close()  # запись без commit -> не возвращается в пул
+    c3 = A.get_db(); check("соединение с незакоммиченной записью не переиспользуется", c3._c is not raw1); c3.close()
+    # матч, добавленный через админку, виден сразу (инвалидация кэша)
+    adm.post("/api/admin/create-event", {"sport": "Футбол", "title": "W-adm — Y", "o1": 2, "ox": 3, "o2": 2})
+    check("новый ручной матч виден сразу (кэш сброшен)", "W-adm" in {e["title"].split(" — ")[0] for e in u.get("/api/events").json()})
+    check("gzip для списка матчей", "gzip" in c.get("/web/app.js", headers={"Accept-Encoding": "gzip"}).headers.get("content-encoding", ""))
+
 print(f"\nИТОГО: {OK} ok, {FAIL} fail"); sys.exit(1 if FAIL else 0)

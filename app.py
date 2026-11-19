@@ -5,9 +5,12 @@ import hashlib
 import logging
 import random
 import asyncio
+import time
+import threading
+import collections
 import feedparser
 from urllib.parse import parse_qsl
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
 import libsql
@@ -15,6 +18,8 @@ import extras
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
+from anyio import from_thread
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Update, WebAppInfo, MenuButtonWebApp, Message
@@ -36,6 +41,7 @@ bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) if
 dp = Dispatcher()
 
 # --- РАССЫЛКА О МАТЧАХ ---
+
 pending_matches = []
 notify_task = None
 
@@ -57,23 +63,133 @@ async def flush_pending_matches():
     text += f"👉 <a href='{BOT_WEBAPP_URL}'>Сделать ставку</a>"
     pending_matches = []
 
-    conn = get_db()
-    cur = conn.execute("SELECT user_id FROM users")
-    users = cur.fetchall()
-    conn.close()
+    users = await asyncio.to_thread(_all_user_ids)
     
     for u in users:
         try:
             await bot.send_message(chat_id=u[0], text=text, parse_mode="HTML", disable_web_page_preview=True)
         except Exception:
             pass
+        await asyncio.sleep(0.04)
     notify_task = None
 
-# --- ПОДКЛЮЧЕНИЕ К TURSO ---
-def get_db():
+# --- ПОДКЛЮЧЕНИЕ К TURSO (с пулом соединений) ---
+# Раньше на КАЖДЫЙ запрос открывалось новое соединение с Turso (новый TLS/HTTP-канал) —
+# это главная причина лагов. Теперь соединения переиспользуются.
+# DB_POOL=0 — выключить пул; DB_POOL_SIZE — макс. число «тёплых» соединений;
+# DB_POOL_IDLE — через сколько секунд простоя соединение считается устаревшим.
+DB_POOL = os.getenv("DB_POOL", "1") not in ("0", "false", "False", "")
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "8"))
+DB_POOL_IDLE = float(os.getenv("DB_POOL_IDLE", "4"))
+_pool = collections.deque()
+_pool_lock = threading.Lock()
+
+
+def _raw_connect():
     if not TURSO_URL or not TURSO_TOKEN:
         raise Exception("Не заданы TURSO_DATABASE_URL или TURSO_AUTH_TOKEN")
     return libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+
+
+class PooledConn:
+    """Обёртка: close() возвращает соединение в пул вместо закрытия.
+    Соединение с незавершённой записью или после ошибки закрывается по-настоящему
+    (никаких «хвостов» транзакций у следующего пользователя)."""
+    __slots__ = ("_c", "_dirty", "_broken", "_closed")
+
+    def __init__(self, c):
+        self._c, self._dirty, self._broken, self._closed = c, False, False, False
+
+    def execute(self, sql, *a, **k):
+        if not self._dirty and sql.lstrip()[:6].upper() != "SELECT":
+            self._dirty = True
+        try:
+            return self._c.execute(sql, *a, **k)
+        except BaseException:
+            self._broken = True
+            raise
+
+    def executemany(self, *a, **k):
+        self._dirty = True
+        return self._c.executemany(*a, **k)
+
+    def executescript(self, *a, **k):
+        self._dirty = True
+        return self._c.executescript(*a, **k)
+
+    def cursor(self, *a, **k):
+        self._dirty = True
+        return self._c.cursor(*a, **k)
+
+    def commit(self):
+        try:
+            r = self._c.commit()
+        except BaseException:
+            self._broken = True
+            raise
+        self._dirty = False
+        return r
+
+    def rollback(self):
+        try:
+            r = self._c.rollback()
+        except BaseException:
+            self._broken = True
+            raise
+        self._dirty = False
+        return r
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        if self._dirty or self._broken or not DB_POOL:
+            try: self._c.close()
+            except Exception: pass
+            return
+        with _pool_lock:
+            if len(_pool) < DB_POOL_SIZE:
+                _pool.append((self._c, time.monotonic()))
+                return
+        try: self._c.close()
+        except Exception: pass
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def get_db():
+    if not DB_POOL:
+        return _raw_connect()
+    now = time.monotonic()
+    while True:
+        with _pool_lock:
+            item = _pool.pop() if _pool else None
+        if item is None:
+            return PooledConn(_raw_connect())
+        c, ts = item
+        if now - ts <= DB_POOL_IDLE:
+            return PooledConn(c)
+        try: c.close()
+        except Exception: pass
+
+
+def req_json(request: Request):
+    """Тело запроса для синхронных эндпоинтов (работают в threadpool и не блокируют сервер)."""
+    return from_thread.run(request.json)
+
+def _all_user_ids():
+    conn = get_db()
+    try:
+        return conn.execute("SELECT user_id FROM users").fetchall()
+    finally:
+        conn.close()
 
 # --- АВТОРИЗАЦИЯ ---
 def validate_init_data(init_data: str):
@@ -92,7 +208,7 @@ def validate_init_data(init_data: str):
         return user if user.get("id") else None
     except Exception: return None
 
-async def current_user(request: Request):
+def current_user(request: Request):
     init_data = request.headers.get("X-Telegram-Init-Data", "")
     user = validate_init_data(init_data)
     if user: return user
@@ -162,14 +278,24 @@ def init_db():
         conn.commit()
     conn.close()
 
+_user_seen = {}  # uid -> (username, first_name, monotonic): не пишем в БД на каждый запрос
+
+
 def ensure_user(user):
     uid = int(user["id"])
+    uname, fname = user.get("username"), user.get("first_name", "Игрок")
+    seen = _user_seen.get(uid)
+    now = time.monotonic()
+    if seen and seen[0] == uname and seen[1] == fname and now - seen[2] < 600:
+        return uid
     conn = get_db()
     conn.execute("INSERT OR IGNORE INTO users (user_id, username, first_name, balance, created_at) VALUES (?, ?, ?, 1000, ?)",
-                 (uid, user.get("username"), user.get("first_name", "Игрок"), datetime.now(timezone.utc).isoformat()))
-    conn.execute("UPDATE users SET username=?, first_name=? WHERE user_id=?", (user.get("username"), user.get("first_name", "Игрок"), uid))
+                 (uid, uname, fname, datetime.now(timezone.utc).isoformat()))
+    conn.execute("UPDATE users SET username=?, first_name=? WHERE user_id=?", (uname, fname, uid))
     conn.commit()
     conn.close()
+    if len(_user_seen) > 20000: _user_seen.clear()
+    _user_seen[uid] = (uname, fname, now)
     return uid
 
 # --- БОТ ---
@@ -202,10 +328,7 @@ async def cmd_broadcast(message: Message):
     
     await message.answer("⏳ Начинаю рассылку...")
     
-    conn = get_db()
-    cur = conn.execute("SELECT user_id FROM users")
-    users = cur.fetchall()
-    conn.close()
+    users = await asyncio.to_thread(_all_user_ids)
     
     success = 0
     fail = 0
@@ -233,6 +356,23 @@ app = FastAPI(title="MSPBETS API", lifespan=lifespan)
 extras.setup(get_db=get_db, validate=validate_init_data, bot=bot, admin_ids=ADMIN_IDS,
              webapp_url=BOT_WEBAPP_URL, bot_username=os.getenv("BOT_USERNAME", "mspbetsbot"))
 extras.register(app)
+app.add_middleware(GZipMiddleware, minimum_size=800)  # JS/CSS/JSON сжимаются в 3–5 раз
+
+
+@app.middleware("http")
+async def static_cache(request: Request, call_next):
+    resp = await call_next(request)
+    p = request.url.path
+    if p.startswith("/web/"):
+        if p.endswith((".svg", ".png", ".jpg", ".webp", ".woff2")):
+            resp.headers["Cache-Control"] = "public, max-age=604800, immutable"  # картинки скинов/кейсов
+        else:  # js/css: браузер проверяет ETag (304 без загрузки, если не менялось)
+            resp.headers["Cache-Control"] = "no-cache"
+    elif p.startswith("/api/"):
+        resp.headers.setdefault("Cache-Control", "no-store")
+    return resp
+
+
 app.mount("/web", StaticFiles(directory="web"), name="web")
 
 @app.get("/")
@@ -248,8 +388,8 @@ async def telegram_webhook(request: Request):
 
 # --- API ЭНДПОИНТЫ ---
 @app.get("/api/me")
-async def me(request: Request):
-    user = await current_user(request)
+def me(request: Request):
+    user = current_user(request)
     uid = ensure_user(user)
     conn = get_db()
     cur = conn.execute("SELECT user_id, username, first_name, balance FROM users WHERE user_id=?", (uid,))
@@ -258,8 +398,8 @@ async def me(request: Request):
     return {"user_id": row[0], "username": row[1], "first_name": row[2], "balance": row[3], "is_admin": uid in ADMIN_IDS}
 
 @app.get("/api/rating")
-async def get_rating(request: Request):
-    await current_user(request)
+def get_rating(request: Request):
+    current_user(request)
     conn = get_db()
     cur = conn.execute("""SELECT u.first_name, u.username, u.balance, u.user_id, COALESCE(p.xp, 0), COALESCE(p.frame, '')
         FROM users u LEFT JOIN profiles p ON p.user_id = u.user_id ORDER BY u.balance DESC LIMIT 50""")
@@ -268,26 +408,58 @@ async def get_rating(request: Request):
     return [{"first_name": r[0], "username": r[1], "balance": r[2], "user_id": r[3],
              "level": extras.core.level_for(r[4]), "frame": r[5]} for r in rows]
 
-@app.get("/api/events")
-async def events(request: Request):
-    user = await current_user(request)
-    ensure_user(user)
+# Окно матчей: в списке только матчи, которые начнутся в ближайшие EVENTS_WINDOW_HOURS (по умолчанию 24 ч)
+EVENTS_WINDOW_H = max(1, int(os.getenv("EVENTS_WINDOW_HOURS", "24")))
+EVENTS_TTL = float(os.getenv("EVENTS_CACHE_SECONDS", "10"))
+_ISO = "%Y-%m-%dT%H:%M:%S+00:00"
+_events_cache = {}
+
+
+def invalidate_events():
+    _events_cache.clear()
+
+
+def _events_rows(include_all):
+    now = datetime.now(timezone.utc)
     conn = get_db()
-    cur = conn.execute("""SELECT e.id, e.sport, e.title, e.status, e.odds_1, e.odds_x, e.odds_2, e.starts_at, f.league
-        FROM events e LEFT JOIN feed_events f ON f.event_id = e.id
-        WHERE e.status <> 'settled' OR e.id IN (SELECT id FROM events WHERE status='settled' ORDER BY id DESC LIMIT 30)
-        ORDER BY CASE WHEN e.status='open' THEN 0 ELSE 1 END, CASE WHEN e.starts_at IS NULL THEN 0 ELSE 1 END,
-                 COALESCE(e.starts_at, ''), e.id DESC""")
-    rows = cur.fetchall()
-    conn.close()
+    try:
+        if include_all:  # админка: все незавершённые + последние 30 рассчитанных
+            cur = conn.execute("""SELECT e.id, e.sport, e.title, e.status, e.odds_1, e.odds_x, e.odds_2, e.starts_at, f.league
+                FROM events e LEFT JOIN feed_events f ON f.event_id = e.id
+                WHERE e.status <> 'settled' OR e.id IN (SELECT id FROM events WHERE status='settled' ORDER BY id DESC LIMIT 30)
+                ORDER BY CASE WHEN e.status='open' THEN 0 ELSE 1 END, CASE WHEN e.starts_at IS NULL THEN 0 ELSE 1 END,
+                         COALESCE(e.starts_at, ''), e.id DESC LIMIT 300""")
+        else:  # игроки: только открытые матчи ближайших 24 часов (+ ручные матчи админа без даты)
+            cur = conn.execute("""SELECT e.id, e.sport, e.title, e.status, e.odds_1, e.odds_x, e.odds_2, e.starts_at, f.league
+                FROM events e LEFT JOIN feed_events f ON f.event_id = e.id
+                WHERE e.status = 'open' AND (e.starts_at IS NULL OR (e.starts_at > ? AND e.starts_at <= ?))
+                ORDER BY CASE WHEN e.starts_at IS NULL THEN 0 ELSE 1 END, COALESCE(e.starts_at, ''), e.id DESC LIMIT 150""",
+                (now.strftime(_ISO), (now + timedelta(hours=EVENTS_WINDOW_H)).strftime(_ISO)))
+        rows = cur.fetchall()
+    finally:
+        conn.close()
     return [{"id": r[0], "sport": r[1], "title": r[2], "status": r[3], "odds_1": r[4], "odds_x": r[5], "odds_2": r[6],
              "starts_at": r[7], "league": r[8]} for r in rows]
 
-@app.post("/api/predict")
-async def predict(request: Request):
-    user = await current_user(request)
+
+@app.get("/api/events")
+def events(request: Request, all: int = 0):
+    user = current_user(request)
     uid = ensure_user(user)
-    body = await request.json()
+    include_all = bool(all) and uid in ADMIN_IDS
+    key = "all" if include_all else "public"
+    hit = _events_cache.get(key)
+    if hit and time.monotonic() - hit[0] < EVENTS_TTL:
+        return hit[1]
+    data = _events_rows(include_all)
+    _events_cache[key] = (time.monotonic(), data)
+    return data
+
+@app.post("/api/predict")
+def predict(request: Request):
+    user = current_user(request)
+    uid = ensure_user(user)
+    body = req_json(request)
     try:
         event_id = int(body["event_id"]); points = int(body["points"]); choice = str(body["choice"])
     except Exception:
@@ -298,9 +470,9 @@ async def predict(request: Request):
     return {"ok": True, "unlocked": extras.core.pop_unlocked()}
 
 @app.post("/api/calc-win")
-async def calc_win(request: Request):
-    user = await current_user(request)
-    body = await request.json()
+def calc_win(request: Request):
+    user = current_user(request)
+    body = req_json(request)
     event_id = int(body["event_id"]); points = int(body["points"]); choice = str(body["choice"])
     
     conn = get_db()
@@ -317,10 +489,10 @@ async def calc_win(request: Request):
     return {"potential_win": potential_win}
 
 @app.post("/api/express")
-async def express_bet(request: Request):
-    user = await current_user(request)
+def express_bet(request: Request):
+    user = current_user(request)
     uid = ensure_user(user)
-    body = await request.json()
+    body = req_json(request)
     try:
         amount = int(body.get("amount", 0)); items = body.get("items", [])
     except Exception:
@@ -330,8 +502,8 @@ async def express_bet(request: Request):
     return {"ok": True, "message": f"Экспресс принят. Общий кф: {round(res['total_odds'], 2)}", "unlocked": extras.core.pop_unlocked()}
 
 @app.get("/api/history")
-async def get_history(request: Request):
-    user = await current_user(request)
+def get_history(request: Request):
+    user = current_user(request)
     uid = ensure_user(user)
     conn = get_db()
     
@@ -358,8 +530,8 @@ async def get_history(request: Request):
     return rows[:50]
 
 @app.get("/api/bet/{bet_id}")
-async def get_bet_detail(bet_id: int, request: Request):
-    await current_user(request)
+def get_bet_detail(bet_id: int, request: Request):
+    current_user(request)
     conn = get_db()
     cur = conn.execute("""
         SELECT e.title, e.sport, p.choice, p.points, p.locked_odds, p.status, p.created_at
@@ -379,10 +551,10 @@ async def get_bet_detail(bet_id: int, request: Request):
 
 # --- АДМИНКА ---
 @app.post("/api/admin/give-points")
-async def give_points(request: Request):
-    user = await current_user(request)
+def give_points(request: Request):
+    user = current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    body = await request.json()
+    body = req_json(request)
     target = str(body.get("target", "")).strip()
     amount = int(body.get("amount", 0)); action = str(body.get("action", "add"))
     
@@ -399,22 +571,23 @@ async def give_points(request: Request):
     return {"ok": True, "message": f"Успешно! {action} {amount} баллов"}
 
 @app.post("/api/admin/update-odds/{event_id}")
-async def admin_update_odds(event_id: int, request: Request):
-    user = await current_user(request)
+def admin_update_odds(event_id: int, request: Request):
+    user = current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    body = await request.json()
+    body = req_json(request)
     o1, ox, o2 = float(body["o1"]), body.get("ox"), float(body["o2"])
     ox = float(ox) if ox else None
     if o1 < 1.01 or o2 < 1.01 or (ox is not None and ox < 1.01):
         raise HTTPException(400, "Коэффициент должен быть не меньше 1.01")
     with extras.core.db() as conn:
         conn.execute("UPDATE events SET odds_1=?, odds_x=?, odds_2=? WHERE id=?", (o1, ox, o2, event_id))
+        invalidate_events()
         extras.core.notify_many(conn, extras.betting.odds_changed(conn, event_id, (o1, ox, o2)))  # «коэффициент вырос»
     return {"ok": True, "message": "Коэффициенты обновлены!"}
 
 @app.post("/api/admin/toggle-event/{event_id}")
-async def toggle_event(event_id: int, request: Request):
-    user = await current_user(request)
+def toggle_event(event_id: int, request: Request):
+    user = current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     
     conn = get_db()
@@ -430,14 +603,15 @@ async def toggle_event(event_id: int, request: Request):
     conn.execute("UPDATE events SET status=? WHERE id=?", (new_status, event_id))
     conn.commit()
     conn.close()
+    invalidate_events()
     
     return {"ok": True, "status": new_status, "message": f"Матч {'закрыт' if new_status == 'closed' else 'открыт'}"}
 
 @app.post("/api/admin/user-settings")
-async def admin_user_settings(request: Request):
-    user = await current_user(request)
+def admin_user_settings(request: Request):
+    user = current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    body = await request.json()
+    body = req_json(request)
     target_id = int(body.get("user_id", 0))
     forced_skin_id = body.get("forced_skin_id")
     custom_chance = int(body.get("custom_chance", 10))
@@ -453,8 +627,8 @@ async def admin_user_settings(request: Request):
     return {"ok": True, "message": "Настройки обновлены!"}
 
 @app.get("/api/admin/users")
-async def admin_users(request: Request):
-    user = await current_user(request)
+def admin_users(request: Request):
+    user = current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     conn = get_db()
     cur = conn.execute("SELECT user_id, first_name, username, balance FROM users ORDER BY created_at DESC LIMIT 100")
@@ -463,8 +637,8 @@ async def admin_users(request: Request):
     return [{"user_id": r[0], "first_name": r[1], "username": r[2], "balance": r[3]} for r in rows]
 
 @app.get("/api/admin/all-skins")
-async def admin_all_skins(request: Request):
-    user = await current_user(request)
+def admin_all_skins(request: Request):
+    user = current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     conn = get_db()
     cur = conn.execute("SELECT id, name, price FROM skins ORDER BY price DESC")
@@ -475,16 +649,19 @@ async def admin_all_skins(request: Request):
 @app.post("/api/admin/create-event")
 async def admin_create_event(request: Request):
     global notify_task
-    user = await current_user(request)
-    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    user = current_user(request)
     body = await request.json()
-    
-    conn = get_db()
-    conn.execute("INSERT INTO events (sport, title, odds_1, odds_x, odds_2, created_at) VALUES (?,?,?,?,?,?)",
-                 (body["sport"], body["title"], body["o1"], body.get("ox"), body["o2"], datetime.now(timezone.utc).isoformat()))
-    conn.commit()
-    conn.close()
-    
+
+    def _do():
+        if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+        conn = get_db()
+        conn.execute("INSERT INTO events (sport, title, odds_1, odds_x, odds_2, created_at) VALUES (?,?,?,?,?,?)",
+                     (body["sport"], body["title"], body["o1"], body.get("ox"), body["o2"], datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+        conn.close()
+    await asyncio.to_thread(_do)
+    invalidate_events()
+
     pending_matches.append({
         "sport": body["sport"],
         "title": body["title"],
@@ -492,25 +669,26 @@ async def admin_create_event(request: Request):
         "ox": body.get("ox"),
         "o2": body["o2"]
     })
-    
+
     if notify_task is None or notify_task.done():
         notify_task = asyncio.create_task(flush_pending_matches())
-        
+
     return {"ok": True}
 
 @app.post("/api/admin/settle/{event_id}")
-async def settle_event(event_id: int, request: Request):
-    user = await current_user(request)
+def settle_event(event_id: int, request: Request):
+    user = current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    result = str((await request.json()).get("result", ""))  # "1" | "X" | "2" | "void" (отмена)
+    result = str(req_json(request).get("result", ""))  # "1" | "X" | "2" | "void" (отмена)
     with extras.core.db() as conn:
+        invalidate_events()
         notes = extras.betting.settle_event_core(conn, event_id, result)  # выплаты + журнал + задания
         extras.core.notify_many(conn, notes)                              # «ставка сыграла» в бота
     return {"ok": True, "notified": len(notes)}
 
 @app.get("/api/admin/bets-report")
-async def admin_bets_report(request: Request):
-    user = await current_user(request)
+def admin_bets_report(request: Request):
+    user = current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
     
     conn = get_db()
@@ -551,10 +729,10 @@ async def admin_bets_report(request: Request):
     return report[:50]
 
 @app.post("/api/admin/create-promo")
-async def create_promo(request: Request):
-    user = await current_user(request)
+def create_promo(request: Request):
+    user = current_user(request)
     if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    body = await request.json()
+    body = req_json(request)
     conn = get_db()
     try:
         conn.execute("INSERT INTO promo_codes (code, reward) VALUES (?, ?)", (body["code"].upper(), int(body["reward"])))
@@ -567,20 +745,20 @@ async def create_promo(request: Request):
 
 @app.post("/api/admin/broadcast")
 async def admin_broadcast(request: Request):
-    user = await current_user(request)
-    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
-    
+    user = current_user(request)
     body = await request.json()
     message_text = str(body.get("text", "")).strip()
-    
-    if not message_text:
-        raise HTTPException(400, "Текст сообщения не может быть пустым")
-    
-    conn = get_db()
-    cur = conn.execute("SELECT user_id FROM users")
-    users = cur.fetchall()
-    conn.close()
-    
+
+    def _users():
+        if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+        if not message_text:
+            raise HTTPException(400, "Текст сообщения не может быть пустым")
+        conn = get_db()
+        rows = conn.execute("SELECT user_id FROM users").fetchall()
+        conn.close()
+        return rows
+    users = await asyncio.to_thread(_users)
+
     success_count = 0
     for u in users:
         try:
@@ -588,14 +766,15 @@ async def admin_broadcast(request: Request):
             success_count += 1
         except Exception:
             pass
-    
+        await asyncio.sleep(0.04)  # лимит Telegram ~30 сообщений/сек
+
     return {"ok": True, "message": f"Сообщение отправлено {success_count} игрокам"}
 
 @app.post("/api/promo/activate")
-async def activate_promo(request: Request):
-    user = await current_user(request)
+def activate_promo(request: Request):
+    user = current_user(request)
     uid = ensure_user(user)
-    code = str((await request.json()).get("code", "")).strip().upper()
+    code = str(req_json(request).get("code", "")).strip().upper()
     conn = get_db()
     cur = conn.execute("SELECT reward FROM promo_codes WHERE code=?", (code,))
     promo = cur.fetchone()
@@ -609,12 +788,18 @@ async def activate_promo(request: Request):
     return {"ok": True, "message": f"+{promo[0]} баллов!"}
 
 # --- НОВОСТИ DOTA 2 ---
+_news_cache = {"ts": 0.0, "data": []}
+
+
 @app.get("/api/dota-news")
-async def get_dota_news(request: Request):
-    await current_user(request)
+def get_dota_news(request: Request):
+    current_user(request)
+    # RSS качаем не чаще раза в 10 минут (раньше — на каждый заход, и это тормозило весь сервер)
+    if _news_cache["data"] and time.monotonic() - _news_cache["ts"] < 600:
+        return _news_cache["data"]
     rss_url = "https://dota2.ru/news/rss/"
     try:
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(rss_url, request_headers={"User-Agent": "Mozilla/5.0 mspbets"})
         news_list = []
         for entry in feed.entries[:10]:
             news_list.append({
@@ -623,13 +808,15 @@ async def get_dota_news(request: Request):
                 "published": entry.get("published", ""),
                 "summary": entry.get("summary", "")[:150] + "..."
             })
-        return news_list
+        if news_list:
+            _news_cache.update(ts=time.monotonic(), data=news_list)
+        return news_list or _news_cache["data"]
     except Exception:
-        return []
+        return _news_cache["data"]
 
 @app.get("/api/news-detail")
-async def get_news_detail(url: str, request: Request):
-    await current_user(request)
+def get_news_detail(url: str, request: Request):
+    current_user(request)
     return {"html": f'<p style="color: #fff;">Читайте полную версию по ссылке:</p><a href="{url}" target="_blank" style="color: #55ff00; font-size: 16px; font-weight: bold;">Открыть новость</a>'}
 
 @app.get("/health")

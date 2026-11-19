@@ -16,6 +16,14 @@
 
   const BOT_LINK = 'https://t.me/mspbetsbot';
 
+  // ---------- Лёгкий режим для слабых телефонов ----------
+  // Меньше анимаций и эффектов, если устройство слабое или включена экономия движения.
+  try {
+    const weak = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) || (navigator.deviceMemory && navigator.deviceMemory <= 4) ||
+      (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (weak) document.documentElement.classList.add('lite');
+  } catch (_) {}
+
   // ---------- Утилиты ----------
   const $ = (id) => document.getElementById(id);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -140,11 +148,18 @@
   }
 
   // ---------- Матчи ----------
-  async function loadEvents() {
-    state.events = await api('/api/events');
-    try { state.watch = new Set((await api('/api/v2/watch')).map((w) => w.event_id)); } catch (_) { state.watch = state.watch || new Set(); }
+  // Игрокам сервер отдаёт только открытые матчи ближайших 24 часов; админке (all=true) — все.
+  async function loadEvents(all) {
+    const [evs, watch] = await Promise.all([
+      api('/api/events' + (all ? '?all=1' : '')),
+      api('/api/v2/watch').catch(() => null),
+    ]);
+    state.events = evs;
+    state.watch = watch ? new Set(watch.map((w) => w.event_id)) : (state.watch || new Set());
     renderEvents();
   }
+  const WINDOW_MS = 24 * 36e5;
+  const inWindow = (e) => { if (!e.starts_at) return true; const t = new Date(e.starts_at).getTime(); return isNaN(t) || (t > Date.now() && t - Date.now() <= WINDOW_MS); };
 
   function splitTeams(title) {
     const p = String(title).split(/\s+[—–-]\s+/);
@@ -152,7 +167,7 @@
   }
 
   function renderEvents() {
-    const open = state.events.filter((e) => e.status === 'open');
+    const open = state.events.filter((e) => e.status === 'open' && inWindow(e));
     const sports = [...new Set(open.map((e) => e.sport))];
     if (state.filter !== 'all' && !sports.includes(state.filter)) state.filter = 'all';
 
@@ -416,7 +431,7 @@
       </div>`).join('') || '<div class="empty">Нет матчей</div>';
   }
 
-  async function refreshAdminEvents() { await loadEvents(); loadSettle(); }
+  async function refreshAdminEvents() { await loadEvents(true); loadSettle(); }
 
   async function toggleEvent(id) {
     try { const r = await post(`/api/admin/toggle-event/${id}`); ok(r.message || 'Готово'); await refreshAdminEvents(); } catch (e) { fail(e); }
@@ -491,7 +506,7 @@
       if (name === 'rating') await loadRating();
       if (name === 'news') await loadNews();
       if (window.MSP && MSP.tabs[name]) await MSP.tabs[name]();
-      if (name === 'admin') { await loadAdminUsers(); await loadEvents(); loadSettle(); loadBetsReport(); }
+      if (name === 'admin') { await Promise.all([loadAdminUsers(), loadEvents(true)]); loadSettle(); loadBetsReport(); }
     } catch (e) { fail(e); }
   }
 

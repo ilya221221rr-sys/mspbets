@@ -9,7 +9,7 @@ extras/feed.py — автоматическая загрузка матчей и
      линии букмекеров, поэтому кэфы считаются по рейтингу Эло, собранному из последних матчей.
 
 Что делает:
-  * каждые FEED_SYNC_MINUTES добавляет новые матчи (ближайшие FEED_DAYS дней) и обновляет кэфы
+  * каждые FEED_SYNC_MINUTES добавляет новые матчи (ближайшие FEED_WINDOW_HOURS часов, по умолчанию 24) и обновляет кэфы
     (рост кэфа → уведомления подписчикам 🔔);
   * закрывает приём ставок в момент начала матча (starts_at);
   * после окончания сам рассчитывает матч (тот же код, что и админский расчёт) и шлёт игрокам
@@ -33,7 +33,9 @@ router = APIRouter(prefix="/api/v2/admin/feed")
 
 ENABLED = os.getenv("FEED_ENABLED", "1") not in ("0", "false", "False", "")
 SYNC_MIN = max(5, int(os.getenv("FEED_SYNC_MINUTES", "20")))
-DAYS = max(1, int(os.getenv("FEED_DAYS", "3")))
+# Окно загрузки: берём только матчи, которые начнутся в ближайшие FEED_WINDOW_HOURS часов (по умолчанию 24).
+# (старая переменная FEED_DAYS больше не используется)
+WINDOW_H = max(1, int(os.getenv("FEED_WINDOW_HOURS", "24")))
 MARGIN = float(os.getenv("FEED_MARGIN", "0.06"))
 PER_LEAGUE = int(os.getenv("FEED_PER_LEAGUE", "8"))
 MAX_OPEN = int(os.getenv("FEED_MAX_OPEN", "60"))
@@ -237,11 +239,11 @@ def sync_once():
     stats = {"new": 0, "updated": 0, "fresh": []}
     errors, notes = [], []
     now = _now()
-    d1, d2 = now - timedelta(hours=3), now + timedelta(days=DAYS)
+    d1, d2 = now - timedelta(hours=1), now + timedelta(hours=WINDOW_H)
     for path, sport, league, has_draw in LEAGUES:
         try:
             events = espn_fetch(path, d1, d2)
-            parsed = [p for p in (parse_event(e, has_draw) for e in events) if p and p["state"] == "pre" and p["odds"] and p["start"] > now]
+            parsed = [p for p in (parse_event(e, has_draw) for e in events) if p and p["state"] == "pre" and p["odds"] and now < p["start"] <= d2]
             parsed.sort(key=lambda p: p["start"])
             with db() as conn:
                 for p in parsed[:PER_LEAGUE]:
@@ -254,7 +256,7 @@ def sync_once():
     if PANDA_TOKEN:
         for game, label in PANDA_GAMES:
             try:
-                parsed = [p for p in panda_matches(game, label) if p["start"] > now]
+                parsed = [p for p in panda_matches(game, label) if now < p["start"] <= d2]
                 with db() as conn:
                     for p in parsed[:PER_LEAGUE]:
                         _upsert(conn, "panda", p["id"], p["sport"], p["league"], p["path"], p["home"], p["away"], p["start"], p["odds"], stats, notes)

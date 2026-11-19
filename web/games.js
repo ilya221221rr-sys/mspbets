@@ -38,7 +38,12 @@
     <div class="gcard"><div class="chat-box" id="cr-chat"></div><form class="chat-form" id="cr-chat-form"><input class="input" id="cr-chat-in" maxlength="200" placeholder="Сообщение…" autocomplete="off"><button class="btn btn-primary btn-sm" type="submit">➤</button></form></div>
     <div class="fair" id="cr-fair"></div>`);
 
-  const CR = { ws: null, st: null, off: 0, chat: [], lastChat: 0, raf: 0, poll: 0, retry: 0, active: false, myCash: null, prevPhase: '', hist: [], curve: [] };
+  const CR = { ws: null, st: null, off: 0, chat: [], lastChat: 0, raf: 0, poll: 0, retry: 0, active: false, myCash: null, prevPhase: '', hist: [], curve: [], last: 0, sig: {}, txt: {}, W: 0, H: 0, dpr: 1, ro: null };
+  // записываем в DOM только когда значение реально изменилось (раньше — 60 раз в секунду подряд)
+  const setTxt = (key, el, v) => { if (CR.txt[key] !== v) { CR.txt[key] = v; el.textContent = v; } };
+  const setCls = (key, el, v) => { if (CR.txt[key] !== v) { CR.txt[key] = v; el.className = v; } };
+  const setHtml = (key, el, v) => { if (CR.sig[key] !== v) { CR.sig[key] = v; el.innerHTML = v; } };
+  function crSize() { const c = $('cr-canvas'); if (!c) return; const r = c.getBoundingClientRect(); CR.dpr = Math.min(devicePixelRatio || 1, 2); CR.W = Math.round(r.width * CR.dpr); CR.H = Math.round(r.height * CR.dpr); if (CR.W && (c.width !== CR.W || c.height !== CR.H)) { c.width = CR.W; c.height = CR.H; } }
   const crNow = () => Date.now() / 1000 + CR.off;
   const crMult = () => { const s = CR.st; return s && s.phase === 'running' ? Math.exp(s.growth * Math.max(0, crNow() - s.start)) : 1; };
   const crMine = () => CR.st && CR.st.bets.find((b) => b.uid === meId());
@@ -62,58 +67,65 @@
     CR.off = st.server_time - Date.now() / 1000;
     const prev = CR.st; CR.st = st;
     if (st.phase !== CR.prevPhase) {
-      if (st.phase === 'betting') { CR.curve = []; CR.myCash = null; }
+      if (st.phase === 'betting') { CR.curve = []; CR.head = null; CR.myCash = null; }
       if (st.phase === 'crashed') { const mine = st.bets.find((b) => b.uid === meId()); if (mine && !mine.cashed) haptic('error'); U.touchMe(); }
       CR.prevPhase = st.phase;
     }
     const mine = crMine();
     if (mine && mine.cashed && !CR.myCash) { CR.myCash = mine; if (!prev || !prev.bets.find((b) => b.uid === meId() && b.cashed)) { haptic('success'); M.loadMe().catch(() => {}); } }
-    $('cr-online').textContent = st.online ? `● ${st.online} онлайн` : '';
-    $('cr-hist').innerHTML = st.history.slice().reverse().map((h) => `<span class="${h.cp >= 10 ? 'hi' : h.cp >= 2 ? 'mid' : 'lo'}">${x2(h.cp)}x</span>`).join('');
-    $('cr-count').textContent = st.bets.length;
-    $('cr-feed').innerHTML = st.bets.map((b) => `<div class="cr-bet ${b.uid === meId() ? 'me' : ''} ${b.cashed ? 'won' : st.phase === 'crashed' ? 'lost' : ''}"><span class="n">${esc(b.name)}</span><span class="a">${fmt(b.amount)}</span><span class="w">${b.cashed ? `x${x2(b.cashed)} +${fmt(b.payout)}` : st.phase === 'crashed' ? '✕' : '…'}</span></div>`).join('') || '<div class="muted-note" style="border:0;background:none">Ставок пока нет — будь первым</div>';
-    $('cr-fair').innerHTML = st.phase === 'crashed' && st.seed ? `Раунд #${st.round_id} · seed: ${st.seed}<br>hash до раунда: ${st.seed_hash}<br>Проверка: crash = HMAC-SHA256(seed, "mspbets-crash")` : `Раунд #${st.round_id} · хеш seed (раскроется после крэша): ${st.seed_hash}`;
+    setTxt('online', $('cr-online'), st.online ? `● ${st.online} онлайн` : '');
+    setHtml('hist', $('cr-hist'), st.history.slice().reverse().map((h) => `<span class="${h.cp >= 10 ? 'hi' : h.cp >= 2 ? 'mid' : 'lo'}">${x2(h.cp)}x</span>`).join(''));
+    setTxt('count', $('cr-count'), String(st.bets.length));
+    setHtml('feed', $('cr-feed'), st.bets.map((b) => `<div class="cr-bet ${b.uid === meId() ? 'me' : ''} ${b.cashed ? 'won' : st.phase === 'crashed' ? 'lost' : ''}"><span class="n">${esc(b.name)}</span><span class="a">${fmt(b.amount)}</span><span class="w">${b.cashed ? `x${x2(b.cashed)} +${fmt(b.payout)}` : st.phase === 'crashed' ? '✕' : '…'}</span></div>`).join('') || '<div class="muted-note" style="border:0;background:none">Ставок пока нет — будь первым</div>');
+    setHtml('fair', $('cr-fair'), st.phase === 'crashed' && st.seed ? `Раунд #${st.round_id} · seed: ${st.seed}<br>hash до раунда: ${st.seed_hash}<br>Проверка: crash = HMAC-SHA256(seed, "mspbets-crash")` : `Раунд #${st.round_id} · хеш seed (раскроется после крэша): ${st.seed_hash}`);
     crButton();
   }
   function crButton() {
     const s = CR.st, b = $('cr-btn'); if (!s || !b) return; const mine = crMine();
-    b.className = 'btn btn-block btn-lg ' + (s.phase === 'running' && mine && !mine.cashed ? 'btn-warn' : 'btn-primary');
-    if (s.phase === 'betting') { b.disabled = !!mine; b.textContent = mine ? `Ставка ${fmt(mine.amount)} принята ✓` : 'Поставить'; }
-    else if (s.phase === 'running') { if (mine && !mine.cashed) { b.disabled = false; b.textContent = `Забрать ${fmt(Math.floor(mine.amount * Math.floor(crMult() * 100) / 100))} PTS`; } else { b.disabled = true; b.textContent = mine ? `Забрано x${x2(mine.cashed)} ✓` : 'Ждите следующий раунд'; } }
-    else { b.disabled = true; b.textContent = 'Раунд завершён'; }
+    setCls('btncls', b, 'btn btn-block btn-lg ' + (s.phase === 'running' && mine && !mine.cashed ? 'btn-warn' : 'btn-primary'));
+    let dis, label;
+    if (s.phase === 'betting') { dis = !!mine; label = mine ? `Ставка ${fmt(mine.amount)} принята ✓` : 'Поставить'; }
+    else if (s.phase === 'running') { if (mine && !mine.cashed) { dis = false; label = `Забрать ${fmt(Math.floor(mine.amount * Math.floor(crMult() * 100) / 100))} PTS`; } else { dis = true; label = mine ? `Забрано x${x2(mine.cashed)} ✓` : 'Ждите следующий раунд'; } }
+    else { dis = true; label = 'Раунд завершён'; }
+    if (b.disabled !== dis) b.disabled = dis;
+    setTxt('btn', b, label);
   }
-  function crLoop() {
+  function crLoop(ts) {
     if (!CR.active) return; CR.raf = requestAnimationFrame(crLoop);
+    if (ts - CR.last < 32) return; CR.last = ts; // ~30 кадров/с — глазу хватает, телефон не греется
     const s = CR.st; const mEl = $('cr-mult'), stEl = $('cr-status'); if (!s || !mEl) return;
     const now = crNow(); let mode = 'live';
-    if (s.phase === 'betting') { mEl.textContent = '1.00x'; mEl.className = 'cr-mult'; stEl.textContent = `Приём ставок: ${Math.max(0, s.bet_end - now).toFixed(1)} c`; mode = 'idle'; }
+    if (s.phase === 'betting') { setTxt('m', mEl, '1.00x'); setCls('mc', mEl, 'cr-mult'); setTxt('st', stEl, `Приём ставок: ${Math.max(0, s.bet_end - now).toFixed(1)} c`); mode = 'idle'; }
     else if (s.phase === 'running') {
       const m = crMult(); const mine = crMine();
-      mEl.textContent = x2(m) + 'x'; mEl.className = 'cr-mult' + (mine && mine.cashed ? ' won' : ''); stEl.textContent = mine && mine.cashed ? `Вы забрали x${x2(mine.cashed)} · +${fmt(mine.payout)}` : mine ? 'Жми «Забрать», пока не поздно!' : 'Раунд идёт';
-      CR.curve.push({ t: now - s.start, m }); if (CR.curve.length > 900) CR.curve.shift(); if (mine && !mine.cashed) crButton(); mode = mine && mine.cashed ? 'cashed' : 'live';
-    } else { mEl.textContent = x2(s.crash_point || 1) + 'x'; mEl.className = 'cr-mult crashed'; stEl.textContent = 'Крэш!'; mode = 'crashed'; }
+      setTxt('m', mEl, x2(m) + 'x'); setCls('mc', mEl, 'cr-mult' + (mine && mine.cashed ? ' won' : '')); setTxt('st', stEl, mine && mine.cashed ? `Вы забрали x${x2(mine.cashed)} · +${fmt(mine.payout)}` : mine ? 'Жми «Забрать», пока не поздно!' : 'Раунд идёт');
+      const lt = CR.curve.length ? CR.curve[CR.curve.length - 1].t : -1; const t = now - s.start;
+      if (t - lt >= 0.12) { CR.curve.push({ t, m }); if (CR.curve.length > 700) CR.curve = CR.curve.filter((_, i) => i % 2 === 0); }
+      CR.head = { t, m }; // «голова» линии рисуется отдельно, чтобы двигалась плавно
+      if (mine && !mine.cashed) crButton(); mode = mine && mine.cashed ? 'cashed' : 'live';
+    } else { setTxt('m', mEl, x2(s.crash_point || 1) + 'x'); setCls('mc', mEl, 'cr-mult crashed'); setTxt('st', stEl, 'Крэш!'); mode = 'crashed'; }
     crDraw(mode, s);
   }
   function crDraw(mode, s) {
-    const c = $('cr-canvas'); const r = c.getBoundingClientRect(); if (!r.width) return; const dpr = Math.min(devicePixelRatio || 1, 2);
-    const W = Math.round(r.width * dpr), H = Math.round(r.height * dpr); if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
-    const g = c.getContext('2d'); g.clearRect(0, 0, W, H);
-    const pad = { l: 40 * dpr, r: 14 * dpr, t: 16 * dpr, b: 18 * dpr }; const pts = CR.curve; const last = pts[pts.length - 1] || { t: 0, m: 1 };
+    const c = $('cr-canvas'); if (!CR.W) crSize(); if (!CR.W) return; const dpr = CR.dpr, W = CR.W, H = CR.H;
+    const g = CR.g || (CR.g = c.getContext('2d')); g.clearRect(0, 0, W, H);
+    const pad = { l: 40 * dpr, r: 14 * dpr, t: 16 * dpr, b: 18 * dpr }; const pts = CR.curve; const last = CR.head || pts[pts.length - 1] || { t: 0, m: 1 };
     const endM = s.phase === 'crashed' ? (s.crash_point || last.m) : last.m;
     const tMax = Math.max(8, last.t * 1.12), mMax = Math.max(2.2, endM * 1.18); const gw = W - pad.l - pad.r, gh = H - pad.t - pad.b;
-    const X = (t) => pad.l + gw * t / tMax, Y = (m) => H - pad.b - gh * (Math.log(m) / Math.log(mMax));
+    const lm = Math.log(mMax), X = (t) => pad.l + gw * t / tMax, Y = (m) => H - pad.b - gh * (Math.log(m) / lm);
     g.font = `${10 * dpr}px Manrope, sans-serif`; g.textBaseline = 'middle';
     [1.5, 2, 3, 5, 10, 25, 100].filter((v) => v < mMax).forEach((v) => { g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = dpr; g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(W - pad.r, Y(v)); g.stroke(); g.fillStyle = 'rgba(139,144,171,.85)'; g.fillText(v + 'x', 4 * dpr, Y(v)); });
-    if (pts.length < 2) return;
+    const n = pts.length + (CR.head ? 1 : 0); if (n < 2) return;
     const col = mode === 'crashed' ? '#FF5D7A' : mode === 'cashed' ? '#2EE59D' : '#22D3EE';
     const grad = g.createLinearGradient(0, pad.t, 0, H - pad.b); grad.addColorStop(0, col + '55'); grad.addColorStop(1, col + '00');
-    g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(X(p.t), Y(p.m)) : g.moveTo(X(p.t), Y(p.m)))); g.lineTo(X(last.t), H - pad.b); g.lineTo(X(0), H - pad.b); g.closePath(); g.fillStyle = grad; g.fill();
-    g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(X(p.t), Y(p.m)) : g.moveTo(X(p.t), Y(p.m)))); g.strokeStyle = col; g.lineWidth = 3 * dpr; g.lineJoin = 'round'; g.stroke();
-    g.beginPath(); g.arc(X(last.t), Y(last.m), 5 * dpr, 0, 7); g.fillStyle = '#fff'; g.shadowColor = col; g.shadowBlur = 14 * dpr; g.fill(); g.shadowBlur = 0;
+    const trace = () => { let i = 0; for (const p of pts) { i ? g.lineTo(X(p.t), Y(p.m)) : g.moveTo(X(p.t), Y(p.m)); i++; } if (CR.head) (i ? g.lineTo(X(CR.head.t), Y(CR.head.m)) : g.moveTo(X(CR.head.t), Y(CR.head.m))); };
+    g.beginPath(); trace(); g.lineTo(X(last.t), H - pad.b); g.lineTo(X(0), H - pad.b); g.closePath(); g.fillStyle = grad; g.fill();
+    g.beginPath(); trace(); g.strokeStyle = col; g.lineWidth = 3 * dpr; g.lineJoin = 'round'; g.stroke();
+    g.beginPath(); g.arc(X(last.t), Y(last.m), 11 * dpr, 0, 7); g.fillStyle = col + '33'; g.fill(); g.beginPath(); g.arc(X(last.t), Y(last.m), 5 * dpr, 0, 7); g.fillStyle = '#fff'; g.fill(); // свечение без shadowBlur (он очень тяжёлый)
   }
-  function crStop() { CR.active = false; cancelAnimationFrame(CR.raf); clearInterval(CR.poll); CR.poll = 0; clearTimeout(CR.retry); if (CR.ws) { try { CR.ws.close(); } catch (_) {} CR.ws = null; } }
+  function crStop() { CR.active = false; cancelAnimationFrame(CR.raf); if (CR.ro) { CR.ro.disconnect(); CR.ro = null; } clearInterval(CR.poll); CR.poll = 0; clearTimeout(CR.retry); if (CR.ws) { try { CR.ws.close(); } catch (_) {} CR.ws = null; } }
   leaveHooks.crash = crStop;
-  M.tabs.crash = async () => { crStop(); CR.active = true; CR.st = null; CR.prevPhase = ''; crChat(); await crPoll(); crConnect(); crLoop(); };
+  M.tabs.crash = async () => { crStop(); CR.active = true; CR.st = null; CR.prevPhase = ''; CR.head = null; CR.sig = {}; CR.txt = {}; CR.g = null; CR.W = 0; crChat(); crSize(); if (window.ResizeObserver && !CR.ro) { CR.ro = new ResizeObserver(crSize); CR.ro.observe($('cr-canvas')); } await crPoll(); crConnect(); CR.raf = requestAnimationFrame(crLoop); };
   M.actions['cr-act'] = async () => {
     const s = CR.st; if (!s) return;
     try {
@@ -176,10 +188,17 @@
     const W = 720, top = 40, bottom = 640, dy = (bottom - top) / PL.rows, dx = (W - 80) / (PL.rows + 2);
     return { W, top, dy, dx, peg: (i, j) => ({ x: W / 2 + (j - (i + 2) / 2) * dx, y: top + i * dy }) };
   }
+  // колышки рисуются один раз в offscreen-canvas и потом просто копируются (раньше — ~100 дуг на каждый кадр)
+  function plPegs() {
+    if (PL.pegCache && PL.pegCache.rows === PL.rows) return PL.pegCache.cv;
+    const cv = document.createElement('canvas'); cv.width = 720; cv.height = 660; const g = cv.getContext('2d'), L = plLayout();
+    g.fillStyle = 'rgba(255,255,255,.85)'; g.beginPath();
+    for (let i = 0; i < PL.rows; i++) for (let j = 0; j < i + 3; j++) { const p = L.peg(i, j); g.moveTo(p.x + 6, p.y); g.arc(p.x, p.y, 6, 0, 7); }
+    g.fill(); PL.pegCache = { rows: PL.rows, cv }; return cv;
+  }
   function plDraw(ballsOn) {
-    const c = $('pl-canvas'), g = c.getContext('2d'), L = plLayout(); g.clearRect(0, 0, 720, 660);
-    g.fillStyle = 'rgba(255,255,255,.85)'; for (let i = 0; i < PL.rows; i++) for (let j = 0; j < i + 3; j++) { const p = L.peg(i, j); g.beginPath(); g.arc(p.x, p.y, 6, 0, 7); g.fill(); }
-    (ballsOn || []).forEach((b) => { g.beginPath(); g.arc(b.x, b.y, 13, 0, 7); g.fillStyle = '#FFC93C'; g.shadowColor = '#FFC93C'; g.shadowBlur = 20; g.fill(); g.shadowBlur = 0; });
+    const c = $('pl-canvas'), g = PL.g || (PL.g = c.getContext('2d')); g.clearRect(0, 0, 720, 660); g.drawImage(plPegs(), 0, 0);
+    (ballsOn || []).forEach((b) => { g.beginPath(); g.arc(b.x, b.y, 22, 0, 7); g.fillStyle = 'rgba(255,201,60,.25)'; g.fill(); g.beginPath(); g.arc(b.x, b.y, 13, 0, 7); g.fillStyle = '#FFC93C'; g.fill(); });
   }
   async function plRender() {
     const cfg = (await config()).plinko[PL.rows][PL.risk];
@@ -244,7 +263,8 @@
   const WH = { rot: 0, busy: false, n: 0 };
   const whColor = (m) => ({ 0: '#2A2F4A', 1.2: '#4EA8FF', 1.5: '#2EE59D', 2: '#FFC93C', 3: '#FFA43C', 5: '#FF5D7A', 10: '#B26BFF' }[m] || '#888');
   async function whDraw() {
-    const seg = (await config()).wheel.segments; WH.n = seg.length; const c = $('wh-canvas'), g = c.getContext('2d'), R = 300, a = Math.PI * 2 / seg.length;
+    if (WH.drawn) return; // колесо рисуется один раз, а не при каждом входе на вкладку
+    const seg = (await config()).wheel.segments; WH.n = seg.length; WH.drawn = true; const c = $('wh-canvas'), g = c.getContext('2d'), R = 300, a = Math.PI * 2 / seg.length;
     g.clearRect(0, 0, 600, 600);
     seg.forEach((m, i) => { g.beginPath(); g.moveTo(R, R); g.arc(R, R, R - 4, -Math.PI / 2 + i * a, -Math.PI / 2 + (i + 1) * a); g.closePath(); g.fillStyle = whColor(m); g.fill(); g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 2; g.stroke();
       g.save(); g.translate(R, R); g.rotate(-Math.PI / 2 + (i + 0.5) * a); g.fillStyle = m ? '#0b0c14' : '#8B90AB'; g.font = '800 22px Manrope, sans-serif'; g.textAlign = 'right'; g.fillText(m ? m + 'x' : '·', R - 22, 8); g.restore(); });
