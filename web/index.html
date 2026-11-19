@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#090A12">
+  <title>MSPBETS — прогнозы на виртуальные баллы</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237C5CFF'/%3E%3Cstop offset='1' stop-color='%2322D3EE'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='40' height='40' rx='12' fill='url(%23g)'/%3E%3Cpath d='M10 28V14l10 9 10-9v14' fill='none' stroke='white' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/web/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+
+  <!-- SVG-спрайт: логотип и иконки -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="brand-grad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#7C5CFF"/>
+        <stop offset="1" stop-color="#22D3EE"/>
+      </linearGradient>
+    </defs>
+    <symbol id="logo" viewBox="0 0 40 40">
+      <rect width="40" height="40" rx="12" fill="url(#brand-grad)"/>
+      <path d="M10 28V14l10 9 10-9v14" fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="31" cy="9" r="3" fill="#FFC93C"/>
+    </symbol>
+    <symbol id="i-matches" viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-crash" viewBox="0 0 24 24"><path d="M22 7 13.5 15.5 8.5 10.5 2 17M16 7h6v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-cases" viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16ZM3.3 7 12 12l8.7-5M12 22V12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v5l3.5 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-news" viewBox="0 0 24 24"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2M18 14h-8M15 18h-5M10 6h8v4h-8V6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-rating" viewBox="0 0 24 24"><path d="m2 5 4.5 6L12 4l5.5 7L22 5l-2 14H4L2 5ZM5 22h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-gift" viewBox="0 0 24 24"><path d="M20 12v10H4V12M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7ZM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="m3 11 18-5v12L3 14v-3ZM11.6 16.8a3 3 0 1 1-5.8-1.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8Z" fill="currentColor"/></symbol>
+  </svg>
+
+  <div class="bg-fx"></div>
+
+  <div class="app">
+
+    <!-- ШАПКА -->
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark"><use href="#logo"/></svg>
+        <span class="brand-word">MSP<b>BETS</b></span>
+      </div>
+      <div class="wallet" title="Ваш баланс">
+        <span class="coin">P</span>
+        <b id="balance">—</b>
+        <span class="wallet-unit">PTS</span>
+      </div>
+    </header>
+
+    <main class="main">
+
+      <!-- МАТЧИ -->
+      <section id="matches" class="panel">
+        <div class="hero">
+          <div class="hero-eyebrow"><span id="hero-name">MSPBETS</span></div>
+          <h1>Прогнозируй.<br><em>Побеждай.</em></h1>
+          <p>Выбирай исходы, собирай экспрессы и поднимайся в топ рейтинга.</p>
+          <div class="hero-actions">
+            <a class="pill-btn" href="https://t.me/mspbetsprizi" target="_blank" rel="noopener" id="btn-channel">
+              <svg class="ico"><use href="#i-megaphone"/></svg>Канал
+            </a>
+            <button class="pill-btn" id="btn-promo" type="button">
+              <svg class="ico"><use href="#i-gift"/></svg>Промокод
+            </button>
+            <button class="pill-btn pill-admin admin-only hidden" type="button" data-tab="admin">
+              <svg class="ico"><use href="#i-shield"/></svg>Админка
+            </button>
+          </div>
+          <div class="disclaimer">Только виртуальные баллы. Без денежных ставок.</div>
+        </div>
+
+        <div class="toolbar">
+          <div class="seg" role="tablist" aria-label="Режим ставки">
+            <button class="seg-btn active" data-action="mode" data-mode="single" type="button">Одинар</button>
+            <button class="seg-btn" data-action="mode" data-mode="express" type="button">Экспресс</button>
+          </div>
+        </div>
+        <div class="chips" id="sport-filter"></div>
+
+        <div id="event-list"></div>
+      </section>
+
+      <!-- КРАШ -->
+      <section id="crash" class="panel hidden">
+        <div class="panel-head">
+          <h2>Краш</h2>
+          <p>Множитель растёт — успей забрать, пока он не упал.</p>
+        </div>
+
+        <div class="crash-card">
+          <div class="crash-history" id="crash-history"></div>
+          <div class="crash-stage">
+            <canvas id="crash-canvas"></canvas>
+            <div class="crash-center">
+              <div class="crash-mult" id="crash-mult">1.00x</div>
+              <div class="crash-status" id="crash-status">Сделай ставку и жми «Старт»</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <label class="label" for="crash-bet">Ставка, PTS</label>
+          <div class="amount-row">
+            <input id="crash-bet" class="input" type="number" min="1" value="100" inputmode="numeric">
+            <button class="chip" type="button" data-action="crash-bet" data-op="half">½</button>
+            <button class="chip" type="button" data-action="crash-bet" data-op="double">×2</button>
+            <button class="chip" type="button" data-action="crash-bet" data-op="max">MAX</button>
+          </div>
+          <div class="btn-row">
+            <button id="crash-start-btn" class="btn btn-primary" type="button" data-action="crash-start">Старт</button>
+            <button id="crash-cashout-btn" class="btn btn-warn" type="button" data-action="crash-cashout" disabled>Забрать</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- КЕЙСЫ -->
+      <section id="cases" class="panel hidden">
+        <div class="panel-head">
+          <h2>Кейсы</h2>
+          <p>Открывай кейсы, собирай скины и улучшай их.</p>
+        </div>
+        <div id="cases-list" class="grid-2"></div>
+
+        <div id="case-result" class="hidden">
+          <div class="roulette" id="roulette">
+            <div class="roulette-track" id="case-strip"></div>
+            <div class="roulette-pointer" id="case-pointer"></div>
+          </div>
+          <div id="case-result-text" class="drop-card hidden"></div>
+        </div>
+
+        <div class="sub-head">Улучшить скин</div>
+        <div id="upgrade-hint" class="muted-note">Выбери скин в инвентаре и нажми «Апгрейд».</div>
+        <div id="upgrade-interface" class="card hidden">
+          <div class="upgrade-row">
+            <div class="up-slot"><img id="upgrade-img-left" src="" alt=""></div>
+            <div class="up-arrow"><svg class="ico"><use href="#i-bolt"/></svg></div>
+            <div class="up-slot up-slot-target">
+              <span class="up-q" id="upgrade-q">?</span>
+              <img id="upgrade-img-right" class="hidden" src="" alt="">
+            </div>
+          </div>
+          <div class="chance-row">
+            <button class="chance-btn active" type="button" data-action="chance" data-chance="20">x5 <small>20%</small></button>
+            <button class="chance-btn" type="button" data-action="chance" data-chance="30">x3 <small>30%</small></button>
+            <button class="chance-btn" type="button" data-action="chance" data-chance="50">x2 <small>50%</small></button>
+          </div>
+          <button id="btn-do-upgrade" class="btn btn-primary btn-block" type="button" data-action="do-upgrade">Улучшить</button>
+          <div id="upgrade-result-text" class="upgrade-result"></div>
+        </div>
+
+        <div class="sub-head">Инвентарь</div>
+        <div id="inventory-list" class="grid-2"></div>
+      </section>
+
+      <!-- ИСТОРИЯ -->
+      <section id="history" class="panel hidden">
+        <div class="panel-head">
+          <h2>История ставок</h2>
+          <p>Нажми на ставку, чтобы открыть карточку и поделиться.</p>
+        </div>
+        <div id="history-list"></div>
+      </section>
+
+      <!-- НОВОСТИ -->
+      <section id="news" class="panel hidden">
+        <div class="panel-head">
+          <h2>Новости Dota 2</h2>
+          <p>Свежие новости киберспорта.</p>
+        </div>
+        <div id="news-list"></div>
+      </section>
+
+      <!-- РЕЙТИНГ -->
+      <section id="rating" class="panel hidden">
+        <div class="panel-head">
+          <h2>Топ игроков</h2>
+          <p>Рейтинг по количеству баллов.</p>
+        </div>
+        <div id="rating-list"></div>
+      </section>
+
+      <!-- АДМИНКА -->
+      <section id="admin" class="panel hidden">
+        <div class="panel-head">
+          <h2>Админ-панель</h2>
+          <p>Управление матчами, баллами и игроками.</p>
+        </div>
+
+        <details class="acc">
+          <summary>Баллы (вручную)</summary>
+          <form id="admin-points-form" class="acc-body">
+            <input id="admin-target" class="input" type="text" placeholder="ID или @username" required>
+            <div class="row">
+              <select id="admin-points-action" class="input"><option value="add">Начислить</option><option value="remove">Списать</option></select>
+              <input id="admin-points-amount" class="input" type="number" min="1" placeholder="Сумма" required>
+            </div>
+            <button class="btn btn-primary" type="submit">Применить</button>
+          </form>
+        </details>
+
+        <details class="acc">
+          <summary>Баллы (из списка)</summary>
+          <form id="admin-dropdown-points" class="acc-body">
+            <select id="drop-user-id" class="input" required><option value="" disabled selected>Выберите игрока...</option></select>
+            <div class="row">
+              <select id="drop-points-action" class="input"><option value="add">Начислить</option><option value="remove">Списать</option></select>
+              <input id="drop-points-amount" class="input" type="number" min="1" placeholder="Сумма" required>
+            </div>
+            <button class="btn btn-primary" type="submit">Применить</button>
+          </form>
+        </details>
+
+        <details class="acc" open>
+          <summary>Расчёт и изменение кэфов</summary>
+          <div class="acc-body"><div id="settle-list"></div></div>
+        </details>
+
+        <details class="acc">
+          <summary>Добавить матч</summary>
+          <form id="admin-event-form" class="acc-body">
+            <select id="admin-sport" class="input"><option>CS2</option><option>Dota 2</option><option>Футбол</option><option>Теннис</option></select>
+            <input id="admin-title" class="input" placeholder="Команда А — Команда Б" required>
+            <div class="row row-3">
+              <input id="admin-o1" class="input" type="number" step="0.01" placeholder="Кф. П1" required>
+              <input id="admin-ox" class="input" type="number" step="0.01" placeholder="Кф. X">
+              <input id="admin-o2" class="input" type="number" step="0.01" placeholder="Кф. П2" required>
+            </div>
+            <button class="btn btn-primary" type="submit">Добавить</button>
+          </form>
+        </details>
+
+        <details class="acc">
+          <summary>Отчёт по ставкам</summary>
+          <div class="acc-body">
+            <button class="btn btn-ghost" type="button" data-action="bets-report">Обновить отчёт</button>
+            <div id="bets-report-list" class="report-list"><div class="empty">Нажмите «Обновить отчёт»</div></div>
+          </div>
+        </details>
+
+        <details class="acc">
+          <summary>Настройки игрока (дроп и апгрейд)</summary>
+          <form id="user-settings-form" class="acc-body">
+            <select id="settings-user-id" class="input" required><option value="" disabled selected>Выберите игрока...</option></select>
+            <label class="label" for="force-skin-select">Скин, который выпадет в следующем кейсе</label>
+            <select id="force-skin-select" class="input"><option value="">Случайный скин</option></select>
+            <label class="label" for="custom-chance">Шанс апгрейда для игрока (%)</label>
+            <input id="custom-chance" class="input" type="number" min="1" max="100" value="10">
+            <button class="btn btn-primary" type="submit">Сохранить настройки</button>
+          </form>
+        </details>
+
+        <details class="acc">
+          <summary>Рассылка всем игрокам</summary>
+          <form id="admin-broadcast-form" class="acc-body">
+            <textarea id="broadcast-text" class="input" placeholder="Текст сообщения для всех игроков..." required rows="4"></textarea>
+            <button class="btn btn-primary" type="submit">Отправить всем</button>
+          </form>
+        </details>
+
+        <details class="acc">
+          <summary>Промокоды</summary>
+          <form id="admin-promo-form" class="acc-body">
+            <input id="admin-promo-code" class="input" placeholder="Код (например WELCOME)" required style="text-transform:uppercase">
+            <input id="admin-promo-reward" class="input" type="number" min="1" placeholder="Награда в баллах" required>
+            <button class="btn btn-primary" type="submit">Создать промокод</button>
+          </form>
+        </details>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- НИЖНЯЯ НАВИГАЦИЯ -->
+  <nav class="bottom-nav" aria-label="Разделы">
+    <button class="nav-btn active" type="button" data-tab="matches"><svg class="ico"><use href="#i-matches"/></svg><span>Матчи</span></button>
+    <button class="nav-btn" type="button" data-tab="crash"><svg class="ico"><use href="#i-crash"/></svg><span>Краш</span></button>
+    <button class="nav-btn" type="button" data-tab="cases"><svg class="ico"><use href="#i-cases"/></svg><span>Кейсы</span></button>
+    <button class="nav-btn" type="button" data-tab="history"><svg class="ico"><use href="#i-history"/></svg><span>История</span></button>
+    <button class="nav-btn" type="button" data-tab="news"><svg class="ico"><use href="#i-news"/></svg><span>Новости</span></button>
+    <button class="nav-btn" type="button" data-tab="rating"><svg class="ico"><use href="#i-rating"/></svg><span>Топ</span></button>
+  </nav>
+
+  <!-- ЭКСПРЕСС-КУПОН -->
+  <div id="express-panel" class="express hidden">
+    <button class="express-head" type="button" data-action="express-toggle">
+      <span class="express-badge" id="cart-count">0</span>
+      <span class="express-title">Экспресс</span>
+      <span class="express-odds">общий кф <b id="cart-total">0.00</b></span>
+      <svg class="ico express-chev"><use href="#i-chevron"/></svg>
+    </button>
+    <div class="express-body" id="express-body">
+      <div id="cart-list"></div>
+      <div class="express-foot">
+        <input id="express-amount" class="input" type="number" min="1" placeholder="Сумма" value="100" inputmode="numeric">
+        <div class="express-win">Выигрыш<b id="express-win">0 PTS</b></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" type="button" data-action="express-clear">Очистить</button>
+        <button class="btn btn-primary" type="button" data-action="express-submit">Поставить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- КУПОН (ОДИНАР) -->
+  <div id="bet-slip-modal" class="modal hidden" data-action="slip-backdrop">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="sheet-title">Купон</div>
+        <button class="icon-btn" type="button" data-action="slip-close" aria-label="Закрыть"><svg class="ico"><use href="#i-x"/></svg></button>
+      </div>
+      <div id="slip-event-title" class="slip-title"></div>
+      <div id="slip-event-choice" class="slip-choice"></div>
+
+      <label class="label" for="slip-amount">Сумма ставки</label>
+      <input id="slip-amount" class="input input-lg" type="number" min="1" value="100" inputmode="numeric">
+      <div class="chips chips-tight">
+        <button class="chip" type="button" data-action="slip-chip" data-amount="100">100</button>
+        <button class="chip" type="button" data-action="slip-chip" data-amount="500">500</button>
+        <button class="chip" type="button" data-action="slip-chip" data-amount="1000">1000</button>
+        <button class="chip" type="button" data-action="slip-chip" data-amount="max">MAX</button>
+      </div>
+
+      <div class="slip-sum">
+        <div><small>Коэффициент</small><b id="slip-odds">—</b></div>
+        <div class="right"><small>Возможный выигрыш</small><b id="slip-win" class="gold">0 PTS</b></div>
+      </div>
+      <button id="slip-submit-btn" class="btn btn-primary btn-block btn-lg" type="button" data-action="slip-submit">Сделать ставку</button>
+    </div>
+  </div>
+
+  <!-- КАРТОЧКА СТАВКИ -->
+  <div id="bet-modal" class="modal modal-center hidden" data-action="bet-backdrop">
+    <div class="bet-wrap">
+      <div class="bet-card" id="bet-card">
+        <div class="bet-banner" id="bet-card-banner">
+          <svg class="bet-logo"><use href="#logo"/></svg>
+          <div class="bet-brand">MSP<b>BETS</b></div>
+          <div class="bet-status" id="bet-card-status">В ожидании</div>
+        </div>
+        <div class="bet-body">
+          <div id="bet-card-sport" class="bet-sport">CS2</div>
+          <div id="bet-card-title" class="bet-title">—</div>
+          <div class="bet-grid">
+            <div><small>Исход</small><b id="bet-card-choice">П1</b></div>
+            <div><small>Ставка</small><b id="bet-card-points" class="gold">0 PTS</b></div>
+            <div><small>Коэффициент</small><b id="bet-card-odds">0.00</b></div>
+            <div><small>Выигрыш</small><b id="bet-card-win">0 PTS</b></div>
+          </div>
+        </div>
+        <div class="bet-foot">Только виртуальные баллы. Без денежных ставок.</div>
+      </div>
+      <button class="btn btn-primary btn-block" type="button" data-action="share"><svg class="ico"><use href="#i-share"/></svg>Поделиться ставкой</button>
+      <button class="btn btn-ghost btn-block" type="button" data-action="bet-close">Закрыть</button>
+    </div>
+  </div>
+
+  <!-- ДИАЛОГ (вместо alert / confirm / prompt) -->
+  <div id="dialog" class="modal modal-center hidden">
+    <div class="dialog">
+      <div id="dialog-title" class="dialog-title"></div>
+      <div id="dialog-text" class="dialog-text"></div>
+      <div id="dialog-fields"></div>
+      <div class="btn-row">
+        <button id="dialog-cancel" class="btn btn-ghost" type="button">Отмена</button>
+        <button id="dialog-ok" class="btn btn-primary" type="button">Ок</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="/web/app.js"></script>
+</body>
+</html>
