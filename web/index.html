@@ -25,7 +25,25 @@
         <stop offset="0" stop-color="#7C5CFF"/>
         <stop offset="1" stop-color="#22D3EE"/>
       </linearGradient>
+      <linearGradient id="coin-edge" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#FFF0A6"/>
+        <stop offset=".5" stop-color="#FFC21A"/>
+        <stop offset="1" stop-color="#C77700"/>
+      </linearGradient>
+      <radialGradient id="coin-face" cx=".35" cy=".28" r=".85">
+        <stop offset="0" stop-color="#FFE48A"/>
+        <stop offset=".6" stop-color="#FFB400"/>
+        <stop offset="1" stop-color="#E58E00"/>
+      </radialGradient>
     </defs>
+    <!-- Монета PTS: ободок, рельефное кольцо, буква P контуром (не зависит от шрифта) и блик -->
+    <symbol id="pts-coin" viewBox="0 0 28 28">
+      <circle cx="14" cy="14" r="13" fill="url(#coin-edge)"/>
+      <circle cx="14" cy="14" r="10.6" fill="url(#coin-face)" stroke="#B36B00" stroke-opacity=".55" stroke-width=".9"/>
+      <path d="M11 20.2V8.1h4.1a3.5 3.5 0 0 1 0 7H11" fill="none" stroke="#7A4300" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M11 20.2V8.1h4.1a3.5 3.5 0 0 1 0 7H11" fill="none" stroke="#FFF3B8" stroke-opacity=".55" stroke-width=".8" stroke-linecap="round" stroke-linejoin="round" transform="translate(-.5 -.5)"/>
+      <path d="M5.6 10.2A9.6 9.6 0 0 1 14 4.4" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="1.4" stroke-linecap="round"/>
+    </symbol>
     <symbol id="logo" viewBox="0 0 40 40">
       <rect width="40" height="40" rx="12" fill="url(#brand-grad)"/>
       <path d="M10 28V14l10 9 10-9v14" fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -57,7 +75,7 @@
         <span class="brand-word">MSP<b>BETS</b></span>
       </div>
       <div class="wallet" title="Ваш баланс">
-        <span class="coin">P</span>
+        <svg class="pts-coin" aria-hidden="true"><use href="#pts-coin"/></svg>
         <b id="balance">—</b>
         <span class="wallet-unit">PTS</span>
       </div>
@@ -340,6 +358,7 @@
   <script src="/web/app.js"></script>
   <script src="/web/extra.js"></script>
   <script src="/web/games.js"></script>
+  <script src="/web/support.js"></script>
   <script src="/web/slots.js"></script>
 </body>
 </html>

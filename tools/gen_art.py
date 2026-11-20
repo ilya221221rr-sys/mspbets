@@ -87,13 +87,15 @@ def main():
     os.makedirs(os.path.join(ROOT, "web", "cases"), exist_ok=True)
     n = 0
     for case in build():
+        if case.get("real"):  # Dota-кейсы используют настоящие иконки из web/dota и web/cases/dota_*.webp
+            continue
         with open(os.path.join(ROOT, "web", "cases", f"{case['slug']}.svg"), "w", encoding="utf-8") as f:
             f.write(case_svg(case["icon"], case["hue"]))
         for it in case["items"]:
             with open(os.path.join(ROOT, "web", "skins", f"{it['slug']}.svg"), "w", encoding="utf-8") as f:
                 f.write(skin_svg(it["name"], it["icon"], it["rarity"], case["hue"]))
             n += 1
-    print(f"Готово: {n} скинов и {len(build())} кейсов")
+    print(f"Готово: {n} скинов и {len([c for c in build() if not c.get('real')])} кейсов")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ def _level_info(xp):
 
 # Картинки-аватары (файлы лежат в web/avatars/<key>.webp). Доступны всем игрокам.
 AVATARS = [
-    ("pudge", "Pudge"), ("axe", "Axe"), ("wolf", "Кибер-волк"), ("astrocat", "Кот-космонавт"),
+    ("pudge", "Pudge"), ("axe", "Axe"), ("tidehunter", "Tidehunter"), ("wolf", "Кибер-волк"), ("astrocat", "Кот-космонавт"),
     ("dragon", "Золотой дракон"), ("robot", "Робот"), ("fox", "Самурай-лис"), ("skull", "Король-череп"),
 ]
 AVATAR_KEYS = {a[0] for a in AVATARS}

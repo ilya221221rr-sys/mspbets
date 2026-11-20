@@ -83,6 +83,82 @@ CASES = [
 ]
 
 
+# --------------------------------------------------------------------------
+# DOTA 2: кейсы с НАСТОЯЩИМИ предметами (картинки — оригинальные иконки Steam, лежат в web/dota/).
+# usd — цена предмета на Торговой площадке Steam (снимок на момент добавления);
+# в PTS: usd * DOTA_RATE (1 $ = 1000 PTS). Шанс выпадения считается так же, как в обычных кейсах:
+# веса подбираются под заданный RTP, а шанс на экране == реальный.
+# Чтобы обновить цены — поменяйте usd. Картинка предмета: web/dota/<img>.webp
+# --------------------------------------------------------------------------
+DOTA_RATE = 1000
+
+DOTA_CASES = [
+    dict(
+        key="dota_gold", name="Dota 2: Золотой тайник", price=1500, rtp=0.92, hue=45, real=True,
+        image="/web/cases/dota_gold.webp",
+        desc="Золотые Immortal-предметы и Genuine Rapier — недорогой вход в мир Dota 2.",
+        items=[
+            ("Golden Edict of Shadows", 0.37, "golden_edict_of_shadows"),
+            ("Crownfall - Dire Creeps", 0.49, "crownfall_dire_creeps"),
+            ("Golden Eye of Ix'yxa", 0.65, "golden_eye_of_ixyxa"),
+            ("Golden Twilight Schism", 0.77, "golden_twilight_schism"),
+            ("Golden Edge of the Lost Order", 1.81, "golden_edge_of_the_lost_order"),
+            ("Golden Profane Union", 2.00, "golden_profane_union"),
+            ("Altar Ball", 2.38, "altar_ball"),
+            ("Golden Shadow Masquerade", 4.41, "golden_shadow_masquerade"),
+            ("Genuine Rapier of the Burning God", 7.76, "genuine_rapier_of_the_burning_god"),
+        ],
+    ),
+    dict(
+        key="dota_immortal", name="Dota 2: Бессмертные", price=6000, rtp=0.93, hue=0, real=True,
+        image="/web/cases/dota_immortal.webp",
+        desc="Популярные Immortal-предметы. В самом низу шанса — легендарный Dragonclaw Hook.",
+        items=[
+            ("Shadow Masquerade", 1.10, "shadow_masquerade"),
+            ("Bracers of the Cavern Luminar", 1.81, "bracers_of_the_cavern_luminar"),
+            ("Phantom Concord", 1.90, "phantom_concord"),
+            ("Primal Paean", 4.43, "primal_paean"),
+            ("Chaos Arbiter", 5.47, "chaos_arbiter"),
+            ("Arms of Desolation", 11.35, "arms_of_desolation"),
+            ("Origin of the Unmaking", 12.65, "origin_of_the_unmaking"),
+            ("Golden Basher Blades", 17.17, "golden_basher_blades"),
+            ("Codicil of the Veiled Ones", 19.34, "codicil_of_the_veiled_ones"),
+            ("Blade of Tears", 34.50, "blade_of_tears"),
+            ("Concord Reversion", 41.00, "concord_reversion"),
+            ("Dragonclaw Hook", 403.13, "dragonclaw_hook"),
+        ],
+    ),
+    dict(
+        key="dota_arcana", name="Dota 2: Арканы", price=20000, rtp=0.94, hue=140, real=True,
+        image="/web/cases/dota_arcana.webp",
+        desc="Самые популярные арканы Dota 2: Manifold Paradox, Demon Eater, Bladeform Legacy и другие.",
+        items=[
+            ("Bladeform Legacy - Mask", 0.49, "bladeform_legacy_mask"),
+            ("Feast of Abscession - Back", 0.59, "feast_of_abscession_back"),
+            ("Rune of the Duelist Indomitable", 0.95, "rune_of_the_duelist_indomitable"),
+            ("Swine Proximity Mine", 0.97, "swine_proximity_mine"),
+            ("The Resurrection of Shen - Wings", 18.31, "the_resurrection_of_shen_wings"),
+            ("Frost Avalanche", 19.68, "frost_avalanche"),
+            ("Demon Eater", 20.84, "demon_eater"),
+            ("The Devotions of Dragonus - Wings", 21.93, "the_devotions_of_dragonus_wings"),
+            ("Feast of Abscession", 22.69, "feast_of_abscession"),
+            ("Tempest Helm of the Thundergod", 24.50, "tempest_helm_of_the_thundergod"),
+            ("Fiery Soul of the Slayer", 24.52, "fiery_soul_of_the_slayer"),
+            ("Great Sage's Reckoning", 25.15, "great_sages_reckoning"),
+            ("Manifold Paradox", 26.50, "manifold_paradox"),
+            ("Bladeform Legacy", 29.98, "bladeform_legacy"),
+            ("Swine of the Sunken Galley", 30.89, "swine_of_the_sunken_galley"),
+            ("The Magus Cypher", 31.41, "the_magus_cypher"),
+            ("Flockheart's Gamble", 32.91, "flockhearts_gamble"),
+            ("Fractal Horns of Inner Abysm", 35.32, "fractal_horns_of_inner_abysm"),
+            ("Blades of Voth Domosh", 38.99, "blades_of_voth_domosh"),
+        ],
+    ),
+]
+
+ALL_CASES = CASES + DOTA_CASES
+
+
 def rarity_for(price, case_price):
     m = price / case_price
     if m < 0.6:
@@ -96,8 +172,27 @@ def rarity_for(price, case_price):
     return "Immortal"
 
 
+def rarity_abs(price):
+    """Редкость настоящих предметов Dota 2 — по абсолютной цене (а не относительно цены кейса)."""
+    if price < 1500:
+        return "Common"
+    if price < 4000:
+        return "Rare"
+    if price < 12000:
+        return "Epic"
+    if price < 35000:
+        return "Legendary"
+    return "Immortal"
+
+
 def item_prices(case):
     out = []
+    if case.get("real"):
+        for _, usd, _ in case["items"]:
+            p = usd * DOTA_RATE
+            step = 10 if p < 100000 else 100
+            out.append(max(1, int(round(p / step) * step)))
+        return out
     for _, _, mult in case["items"]:
         p = case["price"] * mult
         step = 1 if p < 200 else 5 if p < 2000 else 10 if p < 20000 else 50
@@ -133,15 +228,19 @@ def solve_weights(prices, case_price, target_rtp):
 def build():
     """Полный каталог с рассчитанными ценами и весами."""
     out = []
-    for ci, case in enumerate(CASES, start=1):
+    for ci, case in enumerate(ALL_CASES, start=1):
         prices = item_prices(case)
         weights, rtp = solve_weights(prices, case["price"], case["rtp"])
         items = []
-        for i, ((name, icon, mult), price, w) in enumerate(zip(case["items"], prices, weights), start=1):
-            items.append(
-                dict(name=name, icon=icon, price=price, weight=w,
-                     rarity=rarity_for(price, case["price"]), slug=f"c{ci}_{i}")
-            )
+        for i, (raw, price, w) in enumerate(zip(case["items"], prices, weights), start=1):
+            if case.get("real"):
+                name, _usd, img = raw
+                items.append(dict(name=name, icon="", price=price, weight=w, rarity=rarity_abs(price),
+                                  slug=f"c{ci}_{i}", image=f"/web/dota/{img}.webp"))
+            else:
+                name, icon, _mult = raw
+                items.append(dict(name=name, icon=icon, price=price, weight=w,
+                                  rarity=rarity_for(price, case["price"]), slug=f"c{ci}_{i}", image=None))
         out.append({**case, "index": ci, "items": items, "real_rtp": rtp, "slug": f"case{ci}"})
     return out
 

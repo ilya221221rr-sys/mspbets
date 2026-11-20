@@ -192,7 +192,26 @@
       : '';
 
     const list = open.filter((e) => state.filter === 'all' || e.sport === state.filter);
-    $('event-list').innerHTML = list.map((e) => {
+
+    // Группировка: вид спорта → турнир/лига. Внутри группы матчи идут по времени начала.
+    const SPORT_ORDER = ['Dota 2', 'CS2', 'Футбол', 'Баскетбол', 'Хоккей', 'Теннис'];
+    const sportRank = (s) => { const i = SPORT_ORDER.indexOf(s); return i === -1 ? 99 : i; };
+    const t0 = (e) => { const t = e.starts_at ? new Date(e.starts_at).getTime() : 0; return isNaN(t) ? 0 : t; };
+    const groups = new Map();
+    list.forEach((e) => {
+      const key = e.sport + '||' + (e.league || '');
+      if (!groups.has(key)) groups.set(key, { key, sport: e.sport, league: e.league || '', items: [] });
+      groups.get(key).items.push(e);
+    });
+    const ordered = [...groups.values()].sort((a, b) =>
+      sportRank(a.sport) - sportRank(b.sport) || a.sport.localeCompare(b.sport, 'ru') ||
+      Math.min(...a.items.map(t0).map((t) => t || Infinity)) - Math.min(...b.items.map(t0).map((t) => t || Infinity)) ||
+      a.league.localeCompare(b.league, 'ru'));
+    ordered.forEach((g) => g.items.sort((a, b) => (t0(a) || 0) - (t0(b) || 0) || a.id - b.id));
+    state.collapsed = state.collapsed || {};
+    const plural = (n) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? 'матч' : (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) ? 'матча' : 'матчей'; };
+
+    const matchHtml = (e) => {
       const hasDraw = !!e.odds_x;
       const teams = splitTeams(e.title);
       const teamsHtml = teams
@@ -201,7 +220,6 @@
       return `
         <article class="match" data-id="${e.id}">
           <div class="match-head">
-            <span class="sport-badge">${SPORT_ICON[e.sport] || '🏆'} ${esc(e.league || e.sport)}</span>
             <span class="live-dot">${e.starts_at ? esc(fmtStart(e.starts_at)) : 'Приём ставок'}</span>
           </div>
           <div class="teams">${teamsHtml}</div>
@@ -212,6 +230,21 @@
           </div>
           <button type="button" class="bell${state.watch && state.watch.has(e.id) ? ' on' : ''}" data-action="watch" data-id="${e.id}">${state.watch && state.watch.has(e.id) ? '🔔 Уведомим, если кэф вырастет' : '🔕 Сообщить, если кэф вырастет'}</button>
         </article>`;
+    };
+
+    $('event-list').innerHTML = ordered.map((g) => {
+      const collapsed = !!state.collapsed[g.key];
+      const title = g.league || g.sport;
+      return `
+        <section class="lg${collapsed ? ' collapsed' : ''}">
+          <button type="button" class="lg-head" data-action="group-toggle" data-key="${esc(g.key)}" aria-expanded="${collapsed ? 'false' : 'true'}">
+            <span class="lg-ico">${SPORT_ICON[g.sport] || '🏆'}</span>
+            <span class="lg-name"><b>${esc(title)}</b><small>${g.league ? esc(g.sport) + ' · ' : ''}${g.items.length} ${plural(g.items.length)}</small></span>
+            <span class="lg-count">${g.items.length}</span>
+            <svg class="lg-chev"><use href="#i-chevron"/></svg>
+          </button>
+          <div class="lg-body">${g.items.map(matchHtml).join('')}</div>
+        </section>`;
     }).join('') || '<div class="empty">Сейчас нет открытых матчей.<br>Загляни чуть позже 👀</div>';
   }
 
@@ -679,7 +712,7 @@
   // ---------- Навигация ----------
   async function showTab(name) {
     $$('.panel').forEach((p) => p.classList.toggle('hidden', p.id !== name));
-    const PARENT = { slots: 'games', crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', 'news-article': 'profile', rating: 'profile' };
+    const PARENT = { slots: 'games', crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', support: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', 'news-article': 'profile', rating: 'profile' };
     $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === (PARENT[name] || name)));
     if (window.MSP && MSP.leave) MSP.leave(name);
     window.scrollTo({ top: 0 });
@@ -702,6 +735,7 @@
       renderEvents();
     },
     filter(el) { state.filter = el.dataset.sport; renderEvents(); },
+    'group-toggle'(el) { state.collapsed = state.collapsed || {}; const k = el.dataset.key; state.collapsed[k] = !state.collapsed[k]; haptic('light'); renderEvents(); },
     odd(el) {
       const ev = state.events.find((e) => e.id === Number(el.dataset.id));
       if (!ev) return;

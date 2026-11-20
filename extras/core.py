@@ -179,6 +179,19 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS update_seen (
         user_id INTEGER NOT NULL, update_id INTEGER NOT NULL, seen_at TEXT NOT NULL,
         PRIMARY KEY (user_id, update_id))""",
+    # --- поддержка: обращения игроков, переписка, связь «сообщение в Telegram -> обращение» ---
+    """CREATE TABLE IF NOT EXISTS support_tickets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        unread_admin INTEGER NOT NULL DEFAULT 0, unread_user INTEGER NOT NULL DEFAULT 0)""",
+    "CREATE INDEX IF NOT EXISTS idx_st_user ON support_tickets(user_id, id)",
+    """CREATE TABLE IF NOT EXISTS support_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER NOT NULL, sender TEXT NOT NULL,
+        admin_id INTEGER, text TEXT NOT NULL, created_at TEXT NOT NULL)""",
+    "CREATE INDEX IF NOT EXISTS idx_sm_ticket ON support_messages(ticket_id, id)",
+    """CREATE TABLE IF NOT EXISTS support_tg_map (
+        chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, ticket_id INTEGER NOT NULL,
+        PRIMARY KEY (chat_id, message_id))""",
 ]
 
 # Безопасные ALTER (колонка добавляется один раз; если уже есть — пропускаем)

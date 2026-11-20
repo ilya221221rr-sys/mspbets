@@ -65,11 +65,19 @@ with TestClient(A.app) as c:
 
     print("\n== кейсы")
     cs = u.get("/api/v2/cases").json()["cases"]
-    check("6 кейсов", len(cs) == 6, [x["name"] for x in cs])
+    check("9 кейсов (6 своих + 3 Dota 2)", len(cs) == 9, [x["name"] for x in cs])
     for cs_ in cs:
         tot = sum(i["weight"] for i in cs_["items"]); rtp = sum(i["weight"] * i["price"] for i in cs_["items"]) / tot / cs_["price"] * 100
         check(f"RTP «{cs_['name']}» {rtp:.2f}% в 90–95, на экране {cs_['rtp']}%", 90 <= rtp <= 95.01 and abs(rtp - cs_["rtp"]) < 0.01)
         check("сумма шансов 100%", abs(sum(i["chance"] for i in cs_["items"]) - 100) < 0.01)
+    print("\n== Dota 2: кейсы с настоящими предметами")
+    dc = [x for x in cs if x["name"].startswith("Dota 2:")]
+    check("3 Dota-кейса", len(dc) == 3, [x["name"] for x in dc])
+    check("у кейсов и предметов есть существующие картинки", all(os.path.exists(x["image_url"].lstrip("/")) and all(os.path.exists(i["image_url"].lstrip("/")) for i in x["items"]) for x in dc))
+    arc = next(x for x in dc if "Арканы" in x["name"]); names = {i["name"] for i in arc["items"]}
+    check("в кейсе Арканы есть Manifold Paradox, Demon Eater, Bladeform Legacy", {"Manifold Paradox", "Demon Eater", "Bladeform Legacy"} <= names)
+    check("в кейсе Бессмертные есть Dragonclaw Hook", any(i["name"] == "Dragonclaw Hook" for x in dc for i in x["items"]))
+    check("аватар tidehunter в списке и файл существует", "tidehunter" in {a["key"] for a in me["avatars"]} and os.path.exists("web/avatars/tidehunter.webp"))
     core_conn = core.ctx.get_db(); core_conn.execute("update users set balance=500000 where user_id=100"); core_conn.execute("insert into transactions(user_id,amount,balance_after,kind,note,created_at) values(100,499000,500000,'admin','тест','x')"); core_conn.commit(); core_conn.close()
     # Монте-Карло выпадений дешёвого кейса
     case1 = cs[0]; cnt = {}
@@ -426,5 +434,60 @@ with TestClient(A.app) as c:
     check("эндпоинт: без авторизации 401", c.get("/api/news-detail", params={"url": "https://dota2.ru/news/1/"}).status_code == 401)
     NR._download = lambda url: html_
     check("эндпоинт: отдаёт текст статьи", "Ещё один абзац" in u.get("/api/news-detail", params={"url": "https://dota2.ru/news/777-test/?utm_source=x"}).json()["html"])
+
+    print("\n== поддержка")
+    sent = []
+    class FakeMsg:
+        _n = 1000
+        def __init__(s): FakeMsg._n += 1; s.message_id = FakeMsg._n
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kw): sent.append((chat_id, text)); return FakeMsg()
+    core.ctx.bot = FakeBot()
+    sp = U(c, 700, "Игрок"); sp2 = U(c, 701, "Другой")
+    check("пустое сообщение → 400", sp.post("/api/v2/support/send", {"text": "   "}).status_code == 400)
+    check("без авторизации 401", c.post("/api/v2/support/send", json={"text": "x"}).status_code == 401)
+    r = sp.post("/api/v2/support/send", {"text": "Не пришли <b>баллы</b>"}); check("игрок пишет в поддержку", r.status_code == 200, r.text)
+    tid = r.json()["ticket_id"]; time.sleep(0.6)
+    check("обращение ушло админу в бота (с HTML-экранированием)", any(cid == 1 and f"#{tid}" in t and "&lt;b&gt;баллы" in t for cid, t in sent), sent)
+    r2 = sp.post("/api/v2/support/send", {"text": "Ещё уточнение"}); check("второе сообщение — в то же обращение", r2.json()["ticket_id"] == tid)
+    lst = adm.get("/api/v2/admin/support").json(); row = next(x for x in lst["items"] if x["id"] == tid)
+    check("админка видит обращение, 2 непрочитанных", row["unread"] == 2 and row["user_id"] == 700 and lst["unread_total"] >= 2, row)
+    check("игрок не видит админку поддержки (403)", sp.get("/api/v2/admin/support").status_code == 403)
+    check("игрок не может отвечать (403)", sp.post("/api/v2/admin/support/reply", {"ticket_id": tid, "text": "x"}).status_code == 403)
+    th = adm.get(f"/api/v2/admin/support/{tid}").json(); check("переписка в админке: 2 сообщения", [m["from"] for m in th["messages"]] == ["user", "user"], th)
+    check("прочитано — счётчик обнулился", next(x for x in adm.get("/api/v2/admin/support").json()["items"] if x["id"] == tid)["unread"] == 0)
+    sent.clear()
+    check("админ отвечает из приложения", adm.post("/api/v2/admin/support/reply", {"ticket_id": tid, "text": "Начислили, проверьте"}).status_code == 200); time.sleep(0.6)
+    check("ответ ушёл игроку в бота", any(cid == 700 and "Начислили" in t and "Ответ поддержки" in t for cid, t in sent), sent)
+    check("у игрока 1 непрочитанный ответ", sp.get("/api/v2/support/unread").json()["unread"] == 1)
+    th = sp.get("/api/v2/support/thread").json(); check("игрок видит переписку с ответом админа", [m["from"] for m in th["messages"]] == ["user", "user", "admin"] and th["open_ticket"] == tid, th)
+    check("после чтения непрочитанных нет", sp.get("/api/v2/support/unread").json()["unread"] == 0)
+    check("чужая переписка не видна другому игроку", sp2.get("/api/v2/support/thread").json()["messages"] == [])
+    check("ответ на несуществующее обращение — 404", adm.post("/api/v2/admin/support/reply", {"ticket_id": 99999, "text": "x"}).status_code == 404)
+    check("закрытие обращения", adm.post("/api/v2/admin/support/close", {"ticket_id": tid}).status_code == 200)
+    r3 = sp.post("/api/v2/support/send", {"text": "Новый вопрос"}); check("после закрытия — новое обращение", r3.json()["ticket_id"] != tid)
+    for i in range(10): rr = sp2.post("/api/v2/support/send", {"text": f"спам {i}"})
+    check("защита от спама (429)", rr.status_code == 429, rr.status_code)
+    # Telegram: reply админа на пересланное сообщение и обычный текст игрока боту
+    import asyncio
+    from types import SimpleNamespace as NS
+    import extras.support as SUP
+    class Cap:
+        def __init__(s, uid, text, chat_type="private", reply=None):
+            s.from_user = NS(id=uid, username=f"u{uid}", first_name="TG"); s.chat = NS(id=uid, type=chat_type); s.text = text; s.reply_to_message = reply; s.out = []
+        async def answer(s, t, **kw): s.out.append(t)
+    sent.clear(); m = Cap(702, "Привет из бота"); asyncio.run(SUP.bot_text(m))
+    check("текст игрока боту = обращение, игрок получил подтверждение", any("принято" in t for t in m.out) and any(cid == 1 for cid, _ in sent), (m.out, sent))
+    fwd_id = FakeMsg._n; tid2 = None
+    conn = core.ctx.get_db(); row = conn.execute("select ticket_id from support_tg_map where chat_id=1 and message_id=?", (fwd_id,)).fetchone(); conn.close()
+    check("пересланное сообщение привязано к обращению", row is not None); tid2 = row[0]
+    sent.clear(); m = Cap(1, "Ответ через reply", reply=NS(message_id=fwd_id)); asyncio.run(SUP.bot_text(m))
+    check("reply админа в боте доходит игроку", any(cid == 702 and "Ответ через reply" in t for cid, t in sent) and any("отправлен" in t for t in m.out), (m.out, sent))
+    sent.clear(); m = Cap(1, "/reply %d Через команду" % tid2); asyncio.run(SUP.bot_reply_cmd(m))
+    check("/reply номер текст работает", any(cid == 702 and "Через команду" in t for cid, t in sent), (m.out, sent))
+    m = Cap(702, "/reply 1 взлом"); asyncio.run(SUP.bot_reply_cmd(m)); check("/reply недоступен игроку", any("нет доступа" in t for t in m.out))
+    m = Cap(1, "просто текст"); asyncio.run(SUP.bot_text(m)); check("админ без reply получает подсказку", any("reply" in t for t in m.out))
+    m = Cap(1, "/tickets"); asyncio.run(SUP.bot_tickets_cmd(m)); check("/tickets показывает открытые", any("Открытые обращения" in t for t in m.out), m.out)
+    core.ctx.bot = None
 
 print(f"\nИТОГО: {OK} ok, {FAIL} fail"); sys.exit(1 if FAIL else 0)

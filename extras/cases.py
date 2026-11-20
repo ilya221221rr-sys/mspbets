@@ -14,7 +14,7 @@ import time
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from . import core
-from .catalog import CASES as CATALOG_CASES, WEIGHT_TOTAL, build
+from .catalog import ALL_CASES as CATALOG_CASES, WEIGHT_TOTAL, build
 from .core import RNG, adjust, all_, auth, db, now_iso, one, touch_user, user_lock
 
 router = APIRouter(prefix="/api/v2")
@@ -36,7 +36,7 @@ def seed():
         if not any(c["name"] in existing for c in cat):
             conn.execute("UPDATE cases SET active=0")
         for c in cat:
-            img = f"/web/cases/{c['slug']}.svg"
+            img = c.get("image") or f"/web/cases/{c['slug']}.svg"
             if c["name"] in existing:
                 cid = existing[c["name"]]
                 conn.execute("UPDATE cases SET price=?, image_url=?, active=1 WHERE id=?", (c["price"], img, cid))
@@ -45,7 +45,7 @@ def seed():
                     "INSERT INTO cases (name, price, image_url, active) VALUES (?,?,?,1)", (c["name"], c["price"], img)
                 ).lastrowid
             for it in c["items"]:
-                simg = f"/web/skins/{it['slug']}.svg"
+                simg = it.get("image") or f"/web/skins/{it['slug']}.svg"
                 row = one(conn, "SELECT id FROM skins WHERE case_id=? AND name=?", (cid, it["name"]))
                 if row:
                     conn.execute(
@@ -235,7 +235,7 @@ def upgrade_targets(request: Request, inv_ids: str = ""):
         bp = chance_bp(src_sum, r[3])
         if UP_MIN_BP <= bp <= UP_MAX_BP:
             out.append({"id": r[0], "name": r[1], "rarity": r[2], "price": r[3], "image_url": r[4], "chance": bp / 100, "mult": round(r[3] / src_sum, 2)})
-    return {"source_sum": src_sum, "fee": UPGRADE_FEE, "targets": out[:60]}
+    return {"source_sum": src_sum, "fee": UPGRADE_FEE, "targets": out[:150]}
 
 
 @router.post("/upgrade")

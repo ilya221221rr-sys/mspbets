@@ -253,3 +253,63 @@ html.slot-open, html.slot-open body { overflow: hidden; }
 .update-text { margin: 10px 0 6px; font-size: 14.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: rgba(243, 244, 250, .92); }
 .update-date { color: var(--muted); font-size: 11.5px; margin-bottom: 14px; }
 .update-card .btn { width: 100%; }
+
+/* ==========================================================
+   Монета PTS в шапке (SVG #pts-coin). Раньше здесь был <span class="coin">P</span>,
+   но класс .coin переопределяется 3D-монеткой из игры «Монетка» — поэтому круг выглядел криво.
+   ========================================================== */
+.pts-coin { width: 28px; height: 28px; flex: none; display: block; filter: drop-shadow(0 1px 5px rgba(255, 190, 40, .5)); }
+.wallet { padding: 4px 13px 4px 4px; gap: 8px; }
+@media (max-width: 400px) { .pts-coin { width: 24px; height: 24px; } .wallet { padding: 3px 9px 3px 3px; gap: 6px; } }
+
+/* ==========================================================
+   Матчи, сгруппированные по турнирам / лигам
+   ========================================================== */
+.lg { margin-bottom: 18px; }
+.lg-head {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 10px;
+  background: linear-gradient(90deg, rgba(124, 92, 255, .20), var(--surface) 70%); border: 1px solid var(--line-2);
+  border-left: 3px solid var(--primary); border-radius: var(--r-md); color: var(--text);
+}
+.lg-head:active { transform: scale(.99); }
+.lg-ico { width: 34px; height: 34px; flex: none; display: grid; place-items: center; font-size: 18px; border-radius: 10px; background: rgba(255, 255, 255, .07); }
+.lg-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lg-name b { font-family: var(--font-display); font-size: 13.5px; font-weight: 700; letter-spacing: .01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-name small { color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.lg-count { min-width: 24px; padding: 3px 8px; text-align: center; border-radius: 999px; background: rgba(255, 255, 255, .09); font-size: 11.5px; font-weight: 800; }
+.lg-chev { width: 18px; height: 18px; flex: none; color: var(--muted); transition: transform .2s; }
+.lg.collapsed .lg-chev { transform: rotate(180deg); }
+.lg.collapsed .lg-body { display: none; }
+.lg.collapsed .lg-head { margin-bottom: 0; }
+.lg-body .match:last-child { margin-bottom: 0; }
+html[data-theme="gta6"] .lg-head { border-left-color: var(--primary); background: linear-gradient(90deg, rgba(255, 46, 136, .22), var(--surface) 70%); }
+
+/* ==========================================================
+   Поддержка
+   ========================================================== */
+.sup-badge { display: none; min-width: 20px; padding: 2px 7px; border-radius: 999px; background: #FF4D6A; color: #fff !important; font-size: 11px; text-align: center; }
+.sup-badge.on { display: inline-block; }
+.sup-card { padding: 12px; }
+.sup-thread { max-height: 52vh; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 2px 10px; overscroll-behavior: contain; }
+.sup-thread .empty { margin: auto 0; }
+.sup-msg { max-width: 86%; padding: 9px 12px 6px; border-radius: 16px; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; background: var(--surface-2); border: 1px solid var(--line); }
+.sup-msg.own { align-self: flex-end; background: rgba(124, 92, 255, .28); border-color: rgba(124, 92, 255, .5); border-bottom-right-radius: 5px; }
+.sup-msg.other { align-self: flex-start; border-bottom-left-radius: 5px; }
+.sup-who { font-size: 11px; font-weight: 800; color: var(--primary-2); margin-bottom: 2px; }
+.sup-msg.own .sup-who { color: var(--gold); }
+.sup-msg time { display: block; text-align: right; font-size: 10.5px; color: var(--muted); margin-top: 3px; }
+.sup-form { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.sup-form textarea.input { min-height: 64px; }
+.sup-form .row { display: flex; gap: 8px; } .sup-form .row .btn { flex: 1; }
+.sup-count { display: inline-block; min-width: 18px; padding: 1px 6px; margin-left: 6px; border-radius: 999px; background: #FF4D6A; color: #fff; font-size: 11px; font-weight: 800; text-align: center; }
+.sup-count:empty { display: none; }
+.sup-list { display: flex; flex-direction: column; gap: 8px; }
+.sup-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); color: var(--text); }
+.sup-row.closed { opacity: .6; }
+.sup-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--line-2); }
+.sup-dot.on { background: #FF4D6A; box-shadow: 0 0 8px #FF4D6A; }
+.sup-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sup-info b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sup-info small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sup-meta { flex: none; text-align: right; font-size: 10.5px; color: var(--muted); font-weight: 700; line-height: 1.4; }
+.sup-head { font-size: 13.5px; margin: 4px 0 10px; } .sup-head a { color: var(--primary-2); } .sup-head small { color: var(--muted); margin-left: 4px; }

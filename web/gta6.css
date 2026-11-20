@@ -61,11 +61,7 @@ html[data-theme="gta6"] .bottom-nav {
 html[data-theme="gta6"] .brand-mark { filter: drop-shadow(0 4px 16px rgba(255, 46, 136, .7)); }
 html[data-theme="gta6"] #brand-grad stop:first-child { stop-color: #FF2E88; }
 html[data-theme="gta6"] #brand-grad stop:last-child { stop-color: #FF9A3C; }
-html[data-theme="gta6"] .brand-word::after {
-  content: ' × VI'; font-weight: 800; letter-spacing: .04em;
-  background: linear-gradient(90deg, #FF2E88, #FFB938); -webkit-background-clip: text; background-clip: text;
-  -webkit-text-fill-color: transparent; color: transparent;
-}
+/* «× VI» рядом с названием убрано по просьбе владельца */
 
 /* Герой-блок: закатное солнце в полоску */
 html[data-theme="gta6"] .hero {

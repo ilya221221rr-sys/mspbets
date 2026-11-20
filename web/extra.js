@@ -183,6 +183,7 @@
         <button data-tab="referral"><span class="i">🤝</span>Пригласить друга<small>+${fmt(50000)} PTS</small></button>
         <button data-tab="rating"><span class="i">👑</span>Топ игроков</button>
         <button data-tab="news"><span class="i">📰</span>Новости Dota 2</button>
+        <button data-tab="support"><span class="i">🛟</span>Поддержка<small id="sup-badge" class="sup-badge"></small></button>
         <button data-action="promo"><span class="i">🎟️</span>Ввести промокод</button>
         ${me.is_admin ? '<button data-tab="admin"><span class="i">🛡️</span>Админ-панель</button>' : ''}
       </div>`;

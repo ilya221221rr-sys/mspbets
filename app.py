@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
 from anyio import from_thread
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Update, WebAppInfo, MenuButtonWebApp, Message
 from aiogram.client.default import DefaultBotProperties
@@ -340,6 +340,21 @@ async def cmd_broadcast(message: Message):
             fail += 1
     
     await message.answer(f"✅ Рассылка завершена.\nОтправлено: {success}\nОшибок: {fail}")
+
+# --- ПОДДЕРЖКА (extras/support.py) ---
+# Админ: reply на обращение / /reply <номер> текст / /close <номер> / /tickets.
+# Игрок: любой обычный текст боту = обращение в поддержку (команды выше не пересекаются с /start и /broadcast).
+@dp.message(Command("reply"))
+async def cmd_support_reply(message: Message): await extras.support.bot_reply_cmd(message)
+
+@dp.message(Command("close"))
+async def cmd_support_close(message: Message): await extras.support.bot_close_cmd(message)
+
+@dp.message(Command("tickets"))
+async def cmd_support_tickets(message: Message): await extras.support.bot_tickets_cmd(message)
+
+@dp.message(F.text & ~F.text.startswith("/"))
+async def on_plain_text(message: Message): await extras.support.bot_text(message)
 
 # --- LIFESPAN ---
 @asynccontextmanager
