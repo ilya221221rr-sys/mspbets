@@ -173,6 +173,12 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS chat_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT,
         text TEXT NOT NULL, created_at TEXT NOT NULL)""",
+    # --- «Что нового»: посты админа и кто их уже прочитал ---
+    """CREATE TABLE IF NOT EXISTS app_updates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS update_seen (
+        user_id INTEGER NOT NULL, update_id INTEGER NOT NULL, seen_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, update_id))""",
 ]
 
 # Безопасные ALTER (колонка добавляется один раз; если уже есть — пропускаем)
@@ -378,16 +384,20 @@ def set_max(conn, uid, key, v):
 # --------------------------------------------------------------------------
 # Ежедневные задания
 # --------------------------------------------------------------------------
-QUESTS = {  # key: (название, событие, цель, награда)
-    "bet3": ("Поставь на 3 матча", "match_bet", 3, 150),
-    "express_win": ("Выиграй экспресс", "express_won", 1, 400),
-    "single_win2": ("Выиграй 2 ординара", "single_won", 2, 250),
-    "play5": ("Сыграй 5 раундов в мини-играх", "game_round", 5, 120),
-    "case2": ("Открой 2 кейса", "case_open", 2, 150),
-    "crash2x": ("Забери x2 или больше в Краше", "crash_2x", 1, 200),
-    "mines8": ("Открой 8 безопасных ячеек в Минах", "mines_safe", 8, 180),
-    "wager1000": ("Поставь суммарно 1000 PTS", "wager", 1000, 200),
-    "upgrade1": ("Сделай апгрейд скина", "upgrade", 1, 160),
+# Множитель наград за задания, ежедневный бонус и призы турниров (было x1, стало x70).
+# Чтобы изменить — поменяйте это число (базовые суммы ниже остались прежними).
+REWARD_MULT = 70
+
+QUESTS = {  # key: (название, событие, цель, награда) — награда = базовая сумма * REWARD_MULT
+    "bet3": ("Поставь на 3 матча", "match_bet", 3, 150 * REWARD_MULT),
+    "express_win": ("Выиграй экспресс", "express_won", 1, 400 * REWARD_MULT),
+    "single_win2": ("Выиграй 2 ординара", "single_won", 2, 250 * REWARD_MULT),
+    "play5": ("Сыграй 5 раундов в мини-играх", "game_round", 5, 120 * REWARD_MULT),
+    "case2": ("Открой 2 кейса", "case_open", 2, 150 * REWARD_MULT),
+    "crash2x": ("Забери x2 или больше в Краше", "crash_2x", 1, 200 * REWARD_MULT),
+    "mines8": ("Открой 8 безопасных ячеек в Минах", "mines_safe", 8, 180 * REWARD_MULT),
+    "wager1000": ("Поставь суммарно 1000 PTS", "wager", 1000, 200 * REWARD_MULT),
+    "upgrade1": ("Сделай апгрейд скина", "upgrade", 1, 160 * REWARD_MULT),
 }
 FIXED_QUESTS = ["bet3", "express_win"]
 
@@ -417,8 +427,8 @@ def quest_event(conn, uid, event, n=1):
 _tour_cache = {"ts": 0, "ids": []}
 REF_MIN_BETS = 5
 REF_MIN_WAGER = 500
-REF_REWARD_REFERRER = 10000
-REF_REWARD_FRIEND = 150
+REF_REWARD_REFERRER = 50000  # пригласившему (было 10 000)
+REF_REWARD_FRIEND = 30000  # приглашённому (было 150)
 REF_MAX_PAID = 100
 
 

@@ -1,0 +1,106 @@
+/* ==========================================================
+   Тема «GTA VI · Vice City» — действует только при <html data-theme="gta6"> (см. theme.js).
+   Палитра: фиолетовая ночь, горячий розовый, закатный оранжевый, жёлтое солнце, бирюза Vice City.
+   Всё переопределяется через CSS-переменные, поэтому обычная тема не затрагивается.
+   ========================================================== */
+html[data-theme="gta6"] {
+  --bg: #12061F;
+  --bg-2: #1A0A2B;
+  --surface: #22103A;
+  --surface-2: #2D1750;
+  --surface-3: #3A1F66;
+  --line: rgba(255, 190, 240, .09);
+  --line-2: rgba(255, 190, 240, .17);
+  --text: #FFF4FB;
+  --muted: #B79BD0;
+  --primary: #FF2E88;
+  --primary-2: #FF9A3C;
+  --grad: linear-gradient(135deg, #FF2E88 0%, #FF7A2F 62%, #FFB938 100%);
+  --gold: #FFD23F;
+  --win: #19E3C8;
+  --lose: #FF5A6E;
+  --warn: #FFA43C;
+  --vice-teal: #19E3C8;
+}
+
+html[data-theme="gta6"],
+html[data-theme="gta6"] body { background: var(--bg); }
+
+/* Небо Vice City: закат сверху, бирюзовый отсвет слева, пурпур снизу + сетка-«синтвейв» у нижнего края */
+html[data-theme="gta6"] .bg-fx {
+  background:
+    radial-gradient(560px 380px at 88% -6%, rgba(255, 46, 136, .42), transparent 62%),
+    radial-gradient(520px 340px at 8% 4%, rgba(255, 154, 60, .26), transparent 60%),
+    radial-gradient(460px 360px at -14% 40%, rgba(25, 227, 200, .16), transparent 62%),
+    radial-gradient(520px 420px at 50% 112%, rgba(255, 46, 136, .20), transparent 60%),
+    linear-gradient(180deg, #1B0832 0%, #12061F 55%, #0D0418 100%);
+}
+html[data-theme="gta6"] .bg-fx::after {
+  content: ''; position: absolute; left: -20%; right: -20%; bottom: 0; height: 28vh;
+  background-image:
+    linear-gradient(rgba(255, 46, 136, .22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 46, 136, .22) 1px, transparent 1px);
+  background-size: 44px 44px;
+  transform: perspective(260px) rotateX(58deg); transform-origin: bottom;
+  -webkit-mask-image: linear-gradient(0deg, #000 0%, transparent 85%);
+  mask-image: linear-gradient(0deg, #000 0%, transparent 85%);
+  opacity: .55;
+}
+html.lite[data-theme="gta6"] .bg-fx::after { display: none; }
+
+/* Шапка и навигация */
+html[data-theme="gta6"] .topbar {
+  background: rgba(18, 6, 31, .96);
+  border-bottom: 1px solid rgba(255, 46, 136, .35);
+  box-shadow: 0 1px 0 rgba(255, 154, 60, .25), 0 8px 24px rgba(255, 46, 136, .08);
+}
+html[data-theme="gta6"] .bottom-nav {
+  background: rgba(18, 6, 31, .97);
+  border-top: 1px solid rgba(255, 46, 136, .35);
+}
+html[data-theme="gta6"] .brand-mark { filter: drop-shadow(0 4px 16px rgba(255, 46, 136, .7)); }
+html[data-theme="gta6"] #brand-grad stop:first-child { stop-color: #FF2E88; }
+html[data-theme="gta6"] #brand-grad stop:last-child { stop-color: #FF9A3C; }
+html[data-theme="gta6"] .brand-word::after {
+  content: ' × VI'; font-weight: 800; letter-spacing: .04em;
+  background: linear-gradient(90deg, #FF2E88, #FFB938); -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
+
+/* Герой-блок: закатное солнце в полоску */
+html[data-theme="gta6"] .hero {
+  background: linear-gradient(135deg, rgba(255, 46, 136, .50), rgba(255, 122, 47, .22) 55%, rgba(25, 227, 200, .10) 100%), var(--surface);
+  border-color: rgba(255, 46, 136, .45);
+  box-shadow: 0 14px 40px rgba(255, 46, 136, .22);
+}
+html[data-theme="gta6"] .hero::before {
+  width: 150px; height: 150px; right: -24px; top: -34px; background: linear-gradient(180deg, #FFD23F 0%, #FF7A2F 45%, #FF2E88 100%);
+  -webkit-mask-image: repeating-linear-gradient(180deg, #000 0 11px, transparent 11px 15px);
+  mask-image: repeating-linear-gradient(180deg, #000 0 11px, transparent 11px 15px);
+  opacity: .85;
+}
+html[data-theme="gta6"] .hero::after { background: rgba(25, 227, 200, .22); }
+html[data-theme="gta6"] .hero-eyebrow { background: rgba(255, 210, 63, .16); color: #FFD23F; }
+html[data-theme="gta6"] .hero p { color: rgba(255, 244, 251, .8); }
+html[data-theme="gta6"] .pill-btn { background: rgba(18, 6, 31, .6); border-color: rgba(255, 190, 240, .25); }
+
+/* Тени и свечения, которые были фиолетовыми */
+html[data-theme="gta6"] .seg-btn.active,
+html[data-theme="gta6"] .btn-primary { box-shadow: 0 8px 24px rgba(255, 46, 136, .42); }
+html[data-theme="gta6"] .odd.selected { box-shadow: 0 8px 24px rgba(255, 46, 136, .48); }
+html[data-theme="gta6"] .up-arrow { box-shadow: 0 8px 24px rgba(255, 46, 136, .5); }
+html[data-theme="gta6"] .sheet { box-shadow: 0 -20px 60px rgba(255, 46, 136, .22); border-top-color: rgba(255, 46, 136, .4); }
+html[data-theme="gta6"] .modal { background: rgba(10, 3, 18, .85); }
+html[data-theme="gta6"] .dialog { border-color: rgba(255, 46, 136, .35); box-shadow: 0 20px 60px rgba(255, 46, 136, .18); }
+html[data-theme="gta6"] .crash-stage { background: linear-gradient(180deg, rgba(255, 46, 136, .10), rgba(18, 6, 31, 0) 70%), var(--surface); }
+html[data-theme="gta6"] .wallet { border-color: rgba(255, 210, 63, .35); }
+
+/* Скелетоны загрузки, поля ввода, карточки — под плум-палитру */
+html[data-theme="gta6"] .input:focus,
+html[data-theme="gta6"] input:focus,
+html[data-theme="gta6"] textarea:focus { border-color: #FF2E88; outline: none; box-shadow: 0 0 0 3px rgba(255, 46, 136, .22); }
+html[data-theme="gta6"] .news-card:active { border-color: #FF2E88; }
+html[data-theme="gta6"] .news-date { color: #FF9A3C; }
+
+/* Бейдж-ленточка «GTA VI» в «Что нового» и на карточках */
+html[data-theme="gta6"] .update-badge { background: var(--grad); color: #fff; }

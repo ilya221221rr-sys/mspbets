@@ -180,7 +180,7 @@
         <button data-tab="history"><span class="i">🎯</span>История ставок</button>
         <button data-tab="achievements"><span class="i">🏅</span>Достижения<small>${got.length}/${ach.items.length}</small></button>
         <button data-tab="social"><span class="i">👥</span>Лента ставок игроков<small>копируй ставки</small></button>
-        <button data-tab="referral"><span class="i">🤝</span>Пригласить друга<small>+${fmt(10000)} PTS</small></button>
+        <button data-tab="referral"><span class="i">🤝</span>Пригласить друга<small>+${fmt(50000)} PTS</small></button>
         <button data-tab="rating"><span class="i">👑</span>Топ игроков</button>
         <button data-tab="news"><span class="i">📰</span>Новости Dota 2</button>
         <button data-action="promo"><span class="i">🎟️</span>Ввести промокод</button>

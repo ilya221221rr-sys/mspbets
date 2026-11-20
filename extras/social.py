@@ -16,7 +16,7 @@ from .core import ACH, QUESTS, all_, auth, db, money, now_iso, one, touch_user, 
 log = logging.getLogger("mspbets.social")
 router = APIRouter(prefix="/api/v2")
 
-DAILY_CYCLE = [50, 75, 100, 125, 150, 200, 400]  # награды по дням серии (цикл 7 дней)
+DAILY_CYCLE = [b * core.REWARD_MULT for b in (50, 75, 100, 125, 150, 200, 400)]  # награды по дням серии (цикл 7 дней), x70
 
 
 def _level_info(xp):
@@ -242,9 +242,9 @@ def referral(request: Request):
 
 # --------------------------- Турниры ---------------------------
 TOURNAMENTS = [  # kind, название, мин. уровень, призовой фонд
-    ("weekly_open", "Недельный забег", 1, 5000),
-    ("weekly_gold", "Золотой кубок · VIP", 20, 25000),
-    ("weekly_diamond", "Алмазный клуб · закрытый", 45, 80000),
+    ("weekly_open", "Недельный забег", 1, 5000 * core.REWARD_MULT),
+    ("weekly_gold", "Золотой кубок · VIP", 20, 25000 * core.REWARD_MULT),
+    ("weekly_diamond", "Алмазный клуб · закрытый", 45, 80000 * core.REWARD_MULT),
 ]
 PRIZE_SPLIT = [0.5, 0.3, 0.2]
 
@@ -261,6 +261,11 @@ def tournament_tick():
                 conn.execute(
                     "INSERT INTO tournaments (kind, name, min_level, prize_pool, starts_at, ends_at) VALUES (?,?,?,?,?,?)",
                     (kind, name, lvl, pool, monday.isoformat(), end.isoformat()),
+                )
+            else:  # турнир недели создан до повышения наград — подтягиваем фонд до актуального
+                conn.execute(
+                    "UPDATE tournaments SET prize_pool=? WHERE kind=? AND starts_at=? AND status='active' AND prize_pool<>?",
+                    (pool, kind, monday.isoformat(), pool),
                 )
         for tid, name, pool in all_(conn, "SELECT id, name, prize_pool FROM tournaments WHERE status='active' AND ends_at<=?", (now.isoformat(),)):
             cur = conn.execute("UPDATE tournaments SET status='paid' WHERE id=? AND status='active'", (tid,))

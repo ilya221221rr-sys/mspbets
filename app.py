@@ -875,8 +875,12 @@ def get_dota_news(request: Request):
 
 @app.get("/api/news-detail")
 def get_news_detail(url: str, request: Request):
+    """Полный текст новости для чтения прямо в приложении (картинки и текст, без перехода на сайт)."""
     current_user(request)
-    return {"html": f'<p style="color: #fff;">Читайте полную версию по ссылке:</p><a href="{url}" target="_blank" style="color: #55ff00; font-size: 16px; font-weight: bold;">Открыть новость</a>'}
+    try:
+        return extras.newsreader.get_article(url)
+    except extras.newsreader.NewsError as e:
+        raise HTTPException(502, str(e))
 
 @app.get("/health")
 async def health(): return {"status": "ok"}

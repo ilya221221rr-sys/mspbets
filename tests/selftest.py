@@ -163,12 +163,12 @@ with TestClient(A.app) as c:
     print("\n== задания, бонус, достижения, профиль")
     q = u.get("/api/v2/quests").json(); check("4 задания, есть «3 матча» и «экспресс»", len(q) == 4 and {"bet3", "express_win"} <= {x["key"] for x in q})
     qd = {x["key"]: x for x in q}; check("задание «выиграй экспресс» выполнено", qd["express_win"]["progress"] == 1, qd["express_win"])
-    b3 = u.bal(); cr = u.post("/api/v2/quests/claim", {"key": "express_win"}); check("награда за задание", cr.status_code == 200 and u.bal() == b3 + 400)
+    b3 = u.bal(); cr = u.post("/api/v2/quests/claim", {"key": "express_win"}); check("награда за задание", cr.status_code == 200 and u.bal() == b3 + 400 * 70)
     check("повторно нельзя", u.post("/api/v2/quests/claim", {"key": "express_win"}).status_code == 400)
     d1 = u.post("/api/v2/daily/claim"); check("ежедневный бонус", d1.status_code == 200 and d1.json()["streak"] == 1, d1.text)
     check("второй раз за день нельзя", u.post("/api/v2/daily/claim").status_code == 400)
     conn = core.ctx.get_db(); conn.execute("update profiles set last_daily=?, streak=6 where user_id=100", ((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)).strftime("%Y-%m-%d"),)); conn.commit(); conn.close()
-    d7 = u.post("/api/v2/daily/claim").json(); check("серия 7 → бонус дня 7 (400)", d7["streak"] == 7 and d7["reward"] == 400, d7)
+    d7 = u.post("/api/v2/daily/claim").json(); check("серия 7 → бонус дня 7 (400 x70)", d7["streak"] == 7 and d7["reward"] == 400 * 70, d7)
     conn = core.ctx.get_db(); conn.execute("update profiles set last_daily='2000-01-01' where user_id=100"); conn.commit(); conn.close()
     check("серия сбрасывается после пропуска", u.post("/api/v2/daily/claim").json()["streak"] == 1)
     ach = u.get("/api/v2/achievements").json()["items"]; got = [a["key"] for a in ach if a["unlocked"]]
@@ -199,9 +199,9 @@ with TestClient(A.app) as c:
     ref = u.get("/api/v2/referral").json(); check("друг привязан", any(f["uid"] == 200 for f in ref["friends"]))
     b_ref = u.bal(); check("до активности бонуса нет", ref["earned"] == 0)
     for _ in range(5): f1.post("/api/v2/games/coin", {"bet": 100, "side": "heads"})
-    ref = u.get("/api/v2/referral").json(); check("после 5 ставок на 500+ бонус выдан", ref["earned"] == 10000 and any(f["paid"] for f in ref["friends"]), ref)
+    ref = u.get("/api/v2/referral").json(); check("после 5 ставок на 500+ бонус выдан", ref["earned"] == 50000 and any(f["paid"] for f in ref["friends"]), ref)
     for _ in range(3): f1.post("/api/v2/games/coin", {"bet": 100, "side": "heads"})
-    check("бонус не повторяется", u.get("/api/v2/referral").json()["earned"] == 10000)
+    check("бонус не повторяется", u.get("/api/v2/referral").json()["earned"] == 50000)
     self_ref = U(c, 300, "Сам", sp="ref_300"); self_ref.get("/api/v2/me"); check("самореферал не засчитан", not u.get("/api/v2/referral").json()["friends"][0]["uid"] == 300)
     journal_ok(100, "после соц."); journal_ok(200, "друг")
 
@@ -377,5 +377,54 @@ with TestClient(A.app) as c:
     check("проигранный экспресс: одна нога won, другая lost, результат виден", sorted(l["status"] for l in hl["legs"]) == ["lost", "won"] and {l["result"] for l in hl["legs"]} == {"1", "2"}, hl)
     check("выкуп проигранной/рассчитанной ставки запрещён", u.post("/api/cashout", {"kind": "express", "id": hl["id"]}).status_code == 400)
     journal_ok(100, "итог")
+
+    print("\n== награды x70 и рефералка 50 000 / 30 000")
+    check("все награды заданий кратны x70", all(q_[3] % 70 == 0 for q_ in core.QUESTS.values()) and core.QUESTS["express_win"][3] == 28000)
+    import extras.social as S2
+    check("ежедневный бонус x70: 3500 … 28000", S2.DAILY_CYCLE[0] == 3500 and S2.DAILY_CYCLE[-1] == 28000, S2.DAILY_CYCLE)
+    check("призовые фонды турниров x70", [t_[3] for t_ in S2.TOURNAMENTS] == [350000, 1750000, 5600000], S2.TOURNAMENTS)
+    check("рефералка: 50 000 пригласившему, 30 000 приглашённому", core.REF_REWARD_REFERRER == 50000 and core.REF_REWARD_FRIEND == 30000)
+    rf = u.get("/api/v2/referral").json(); check("в API рефералки новые суммы", rf["reward_you"] == 50000 and rf["reward_friend"] == 30000, rf)
+
+    print("\n== «Что нового»: посты админа для игроков")
+    p1 = U(c, 901, "P1"); p2 = U(c, 902, "P2")
+    check("игрок не может публиковать (403)", p1.post("/api/v2/admin/updates", {"title": "x", "body": "y"}).status_code == 403)
+    check("пустой текст отклонён", adm.post("/api/v2/admin/updates", {"title": "x", "body": "  "}).status_code == 400)
+    check("слишком длинный текст отклонён", adm.post("/api/v2/admin/updates", {"title": "x", "body": "a" * 2001}).status_code == 400)
+    r1 = adm.post("/api/v2/admin/updates", {"title": "Новые кейсы", "body": "Привет!\nДобавили <b>кейсы</b>."}); check("админ публикует пост", r1.status_code == 200 and r1.json()["id"] > 0, r1.text)
+    r2 = adm.post("/api/v2/admin/updates", {"title": "", "body": "Второй пост"}); check("пустой заголовок → по умолчанию", r2.status_code == 200)
+    un = p1.get("/api/v2/updates/unseen").json(); check("игрок видит 2 непрочитанных, новые первыми", len(un) == 2 and un[0]["body"] == "Второй пост" and un[0]["title"] == "Обновление приложения", un)
+    check("текст сохранён как есть (экранирует клиент)", un[1]["body"] == "Привет!\nДобавили <b>кейсы</b>.")
+    check("без авторизации 401", c.get("/api/v2/updates/unseen").status_code == 401)
+    check("отметка прочитанным", p1.post("/api/v2/updates/seen", {"ids": [x["id"] for x in un]}).status_code == 200)
+    check("после прочтения пусто", p1.get("/api/v2/updates/unseen").json() == [])
+    check("другому игроку всё ещё показывается", len(p2.get("/api/v2/updates/unseen").json()) == 2)
+    check("мусор в ids не ломает", p2.post("/api/v2/updates/seen", {"ids": ["x", None, 99999]}).status_code == 200 and len(p2.get("/api/v2/updates/unseen").json()) == 2)
+    al = adm.get("/api/v2/admin/updates").json(); check("админ видит, сколько прочитали", al["items"][0]["seen"] == 1 and al["items"][1]["seen"] == 1, al)
+    check("игрок не видит админский список", p1.get("/api/v2/admin/updates").status_code == 403)
+    check("удаление поста", adm.post("/api/v2/admin/updates/delete", {"id": r1.json()["id"]}).status_code == 200 and len(p2.get("/api/v2/updates/unseen").json()) == 1)
+    check("удаление несуществующего — 404", adm.post("/api/v2/admin/updates/delete", {"id": 99999}).status_code == 404)
+    check("игрок не может удалять (403)", p1.post("/api/v2/admin/updates/delete", {"id": r2.json()["id"]}).status_code == 403)
+
+    print("\n== новости Dota 2: чтение в приложении")
+    import extras.newsreader as NR
+    html_ = ('<html><body><h1>Заголовок</h1><div itemprop="articleBody" class="p-content"><div style="display: none"><img src="/a.webp"></div>'
+             '<p>Текст <a href="/x">ссылка</a> <script>alert(1)</script><b onclick="x()">жирный</b></p><iframe src="http://evil"></iframe>'
+             '<p><img src="/img/n.webp" width="600"><img src="/flag.png" class="inserted-link__flag"></p>'
+             '<div class="esport-tabs"><p>виджет</p></div><p>Ещё один абзац с достаточно длинным текстом для проверки.</p></div></body></html>')
+    art = NR.parse_article(html_)
+    check("статья: заголовок и абзацы", art["title"] == "Заголовок" and "<p>Текст ссылка" in art["html"], art)
+    check("статья: скрипты, iframe, обработчики событий, ссылки вырезаны", not any(x in art["html"] for x in ("<script", "alert(1)", "<iframe", "onclick", "<a ", "href")), art["html"])
+    check("статья: картинка с абсолютным адресом, флаги и скрытые блоки убраны", art["html"].count("<img") == 1 and 'src="https://dota2.ru/img/n.webp"' in art["html"], art["html"])
+    check("статья: виджеты esport-* вырезаны", "виджет" not in art["html"])
+    for bad in ("https://evil.com/news/1", "http://localhost:8000/x", "ftp://dota2.ru/x", "javascript:alert(1)"):
+        try: NR.clean_url(bad); ok_ = False
+        except NR.NewsError: ok_ = True
+        check(f"чужой адрес запрещён: {bad}", ok_)
+    check("utm-хвост убирается", NR.clean_url("https://dota2.ru/news/1-x/?utm_source=dota2rss") == "https://dota2.ru/news/1-x/")
+    check("эндпоинт: чужой сайт → 502", u.get("/api/news-detail", params={"url": "https://evil.com/a"}).status_code == 502)
+    check("эндпоинт: без авторизации 401", c.get("/api/news-detail", params={"url": "https://dota2.ru/news/1/"}).status_code == 401)
+    NR._download = lambda url: html_
+    check("эндпоинт: отдаёт текст статьи", "Ещё один абзац" in u.get("/api/news-detail", params={"url": "https://dota2.ru/news/777-test/?utm_source=x"}).json()["html"])
 
 print(f"\nИТОГО: {OK} ok, {FAIL} fail"); sys.exit(1 if FAIL else 0)

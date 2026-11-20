@@ -12,6 +12,8 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/web/style.css">
   <link rel="stylesheet" href="/web/extra.css">
+  <link rel="stylesheet" href="/web/gta6.css">
+  <script src="/web/theme.js"></script>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -114,6 +116,12 @@
         <div id="news-list"></div>
       </section>
 
+      <!-- ЧТЕНИЕ НОВОСТИ ВНУТРИ ПРИЛОЖЕНИЯ -->
+      <section id="news-article" class="panel hidden">
+        <button class="back" type="button" data-tab="news">← Новости</button>
+        <article class="article" id="article-body"></article>
+      </section>
+
       <!-- РЕЙТИНГ -->
       <section id="rating" class="panel hidden">
         <div class="panel-head">
@@ -129,6 +137,19 @@
           <h2>Админ-панель</h2>
           <p>Управление матчами, баллами и игроками.</p>
         </div>
+
+        <details class="acc">
+          <summary>📣 Обновления для игроков («Что нового»)</summary>
+          <form id="admin-update-form" class="acc-body">
+            <input id="update-title" class="input" maxlength="80" placeholder="Заголовок (например: Новые кейсы!)">
+            <textarea id="update-text" class="input" placeholder="Что нового в приложении? Игрок увидит это сообщение при заходе." required rows="5" maxlength="2000"></textarea>
+            <button class="btn btn-primary" type="submit">Опубликовать</button>
+          </form>
+          <div class="acc-body" style="padding-top:0">
+            <div class="label">Опубликованные</div>
+            <div id="updates-admin-list" class="promo-list"><div class="empty">Загрузка...</div></div>
+          </div>
+        </details>
 
         <details class="acc">
           <summary>Баллы (вручную)</summary>
@@ -288,6 +309,17 @@
       <button id="bet-cashout-btn" class="btn btn-warn btn-block hidden" type="button" data-action="bet-cashout">Выкупить ставку</button>
       <button class="btn btn-primary btn-block" type="button" data-action="share"><svg class="ico"><use href="#i-share"/></svg>Поделиться ставкой</button>
       <button class="btn btn-ghost btn-block" type="button" data-action="bet-close">Закрыть</button>
+    </div>
+  </div>
+
+  <!-- ЧТО НОВОГО (посты админа показываются игроку при заходе) -->
+  <div id="update-modal" class="modal modal-center hidden">
+    <div class="dialog update-card">
+      <div class="update-badge">🆕 Что нового <span id="upd-count"></span></div>
+      <div id="upd-title" class="dialog-title"></div>
+      <div id="upd-body" class="update-text"></div>
+      <div id="upd-date" class="update-date"></div>
+      <button id="upd-ok" class="btn btn-primary" type="button">Понятно</button>
     </div>
   </div>
 

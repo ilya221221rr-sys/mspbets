@@ -10,8 +10,9 @@
   try {
     tg && tg.ready();
     tg && tg.expand();
-    tg && tg.setHeaderColor && tg.setHeaderColor('#090A12');
-    tg && tg.setBackgroundColor && tg.setBackgroundColor('#090A12');
+    const themeBg = (window.MSP_THEME && window.MSP_THEME.bg) || '#090A12'; // тема задаётся в web/theme.js
+    tg && tg.setHeaderColor && tg.setHeaderColor(themeBg);
+    tg && tg.setBackgroundColor && tg.setBackgroundColor(themeBg);
   } catch (_) { /* старые клиенты Telegram */ }
 
   const BOT_LINK = 'https://t.me/mspbetsbot';
@@ -454,6 +455,69 @@
     if (tg && tg.openLink) tg.openLink(url); else window.open(url, '_blank', 'noopener');
   }
 
+  // Чтение новости прямо в приложении (текст и картинки подгружает сервер, без перехода на сайт)
+  const fmtNewsDate = (v) => { try { const d = new Date(v); return isNaN(d) ? String(v || '') : d.toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }); } catch (_) { return String(v || ''); } };
+  let articleToken = 0;
+  async function openArticle(n) {
+    if (!n) return;
+    const token = ++articleToken;
+    const box = $('article-body');
+    const head = `<h1 class="article-title">${esc(stripHtml(n.title))}</h1><div class="news-date">${esc(fmtNewsDate(n.published))}</div>`;
+    const site = `<button type="button" class="btn btn-ghost article-site" data-action="news-site" data-link="${esc(n.link)}">Открыть на сайте</button>`;
+    box.innerHTML = head + '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+    await showTab('news-article');
+    try {
+      const d = await api('/api/news-detail?url=' + encodeURIComponent(n.link));
+      if (token !== articleToken) return;
+      box.innerHTML = `<h1 class="article-title">${esc(d.title || stripHtml(n.title))}</h1><div class="news-date">${esc(fmtNewsDate(n.published))}</div>` +
+        (d.image ? `<img class="article-cover" src="${esc(d.image)}" alt="" referrerpolicy="no-referrer">` : '') +
+        `<div class="article-text">${d.html}</div>` + site;
+    } catch (e) {
+      if (token !== articleToken) return;
+      box.innerHTML = head + `<p class="article-text">${esc(stripHtml(n.summary))}</p><div class="empty">Полный текст сейчас не загрузился: ${esc(e.message)}</div>` + site;
+    }
+  }
+
+  // ---------- «Что нового»: сообщения админа при заходе ----------
+  async function checkUpdates() {
+    let list;
+    try { list = await api('/api/v2/updates/unseen'); } catch (_) { return; }
+    if (!list || !list.length) return;
+    const ids = list.map((u) => u.id);
+    for (let i = 0; i < list.length; i++) {
+      const u = list[i];
+      $('upd-title').textContent = u.title;
+      $('upd-body').textContent = u.body;
+      $('upd-date').textContent = fmtNewsDate(u.created_at);
+      $('upd-count').textContent = list.length > 1 ? `${i + 1}/${list.length}` : '';
+      $('upd-ok').textContent = i < list.length - 1 ? 'Дальше' : 'Понятно';
+      show('update-modal'); haptic('success');
+      await new Promise((r) => { $('upd-ok').onclick = r; });
+      hide('update-modal');
+    }
+    try { await post('/api/v2/updates/seen', { ids }); } catch (_) {}
+  }
+
+  async function loadAdminUpdates() {
+    const box = $('updates-admin-list');
+    if (!box) return;
+    try {
+      const r = await api('/api/v2/admin/updates');
+      state.adminUpdates = r.items;
+      box.innerHTML = r.items.length ? r.items.map((u) => `
+        <div class="promo-row">
+          <div class="promo-info"><div class="promo-code">${esc(u.title)}</div><div class="promo-meta">${esc(fmtNewsDate(u.created_at))} · прочитали: ${fmt(u.seen)} из ${fmt(r.total_users)}</div></div>
+          <button type="button" class="btn btn-danger btn-sm" data-action="upd-delete" data-id="${u.id}" aria-label="Удалить">🗑</button>
+        </div>`).join('') : '<div class="empty">Постов пока нет</div>';
+    } catch (e) { box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  async function deleteUpdate(id) {
+    const u = (state.adminUpdates || []).find((x) => x.id === id);
+    const v = await dialog({ title: 'Удалить пост?', text: `«${u ? u.title : id}» пропадёт у тех, кто ещё не успел его прочитать.`, okText: 'Удалить', danger: true });
+    if (!v) return;
+    try { const r = await post('/api/v2/admin/updates/delete', { id }); ok(r.message || 'Удалено'); await loadAdminUpdates(); } catch (e) { fail(e); }
+  }
+
   // Краш, кейсы, инвентарь и апгрейд вынесены в /web/games.js и /web/extra.js (новые честные версии)
 
   // ---------- Промокод ----------
@@ -603,6 +667,10 @@
       ok(r.message || 'Удалено'); await loadPromos();
     } catch (e) { fail(e); }
   }
+  bindForm('admin-update-form', async (f) => {
+    const r = await post('/api/v2/admin/updates', { title: $('update-title').value, body: $('update-text').value });
+    ok(r.message || 'Опубликовано'); f.reset(); await loadAdminUpdates();
+  });
   bindForm('admin-promo-form', async (f) => {
     await post('/api/admin/create-promo', { code: $('admin-promo-code').value, reward: Number($('admin-promo-reward').value) });
     ok('Промокод создан!'); f.reset(); await loadPromos();
@@ -611,7 +679,7 @@
   // ---------- Навигация ----------
   async function showTab(name) {
     $$('.panel').forEach((p) => p.classList.toggle('hidden', p.id !== name));
-    const PARENT = { slots: 'games', crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', rating: 'profile' };
+    const PARENT = { slots: 'games', crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', 'news-article': 'profile', rating: 'profile' };
     $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === (PARENT[name] || name)));
     if (window.MSP && MSP.leave) MSP.leave(name);
     window.scrollTo({ top: 0 });
@@ -621,7 +689,7 @@
       if (name === 'rating') await loadRating();
       if (name === 'news') await loadNews();
       if (window.MSP && MSP.tabs[name]) await MSP.tabs[name]();
-      if (name === 'admin') { await Promise.all([loadAdminUsers(), loadEvents(true)]); loadSettle(); loadBetsReport(); loadPromos(); }
+      if (name === 'admin') { await Promise.all([loadAdminUsers(), loadEvents(true)]); loadSettle(); loadBetsReport(); loadPromos(); loadAdminUpdates(); }
     } catch (e) { fail(e); }
   }
 
@@ -659,7 +727,9 @@
     'promo-delete'(el) { const p = (state.promos || [])[Number(el.dataset.idx)]; if (p) deletePromo(p); },
     'bet-backdrop'(el, e) { if (e.target === el) hide('bet-modal'); },
     share: shareBet,
-    'news-open'(el) { const n = (state.news || [])[Number(el.dataset.idx)]; if (n) openLink(n.link); },
+    'news-open'(el) { openArticle((state.news || [])[Number(el.dataset.idx)]); },
+    'news-site'(el) { openLink(el.dataset.link); },
+    'upd-delete'(el) { deleteUpdate(Number(el.dataset.id)); },
     'bets-report': loadBetsReport,
     'odds-edit'(el) { editOdds(Number(el.dataset.id)); },
     toggle(el) { toggleEvent(Number(el.dataset.id)); },
@@ -695,5 +765,6 @@
     $('event-list').innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
     try { await loadMe(); await loadEvents(); }
     catch (e) { $('event-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    checkUpdates();
   })();
 })();
