@@ -116,6 +116,19 @@
 
   const SPORT_ICON = { 'CS2': '🎯', 'Dota 2': '🛡️', 'Футбол': '⚽', 'Теннис': '🎾', 'Баскетбол': '🏀', 'Хоккей': '🏒' };
   const fmtStart = (iso) => { try { const d = new Date(iso); const t = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); const today = new Date(); const tm = new Date(today.getTime() + 864e5); const same = (a, b) => a.toDateString() === b.toDateString(); return (same(d, today) ? 'Сегодня' : same(d, tm) ? 'Завтра' : d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })) + ', ' + t; } catch (_) { return 'Приём ставок'; } };
+  // Название команд из заголовка матча: «Home — Away» (также «vs», «-», «–»)
+  const teamsOf = (title) => {
+    const p = String(title || '').split(/\s+(?:—|–|-|vs\.?|VS|v)\s+/);
+    return p.length >= 2 ? [p[0].trim(), p.slice(1).join(' - ').trim()] : null;
+  };
+  // Понятная подпись исхода: «П1 — Arsenal», «Ничья», «П2 — Chelsea»
+  const pickText = (title, c) => {
+    const t = teamsOf(title);
+    if (c === '1') return t ? `П1 — ${t[0]}` : 'П1 (победа первой команды)';
+    if (c === '2') return t ? `П2 — ${t[1]}` : 'П2 (победа второй команды)';
+    if (c === 'X') return 'Ничья';
+    return choiceLabel(c);
+  };
   const choiceLabel = (c) => (c === 'void' ? 'Возврат' : c === '1' ? 'П1' : c === 'X' ? 'Ничья' : c === '2' ? 'П2' : String(c));
   const choiceShort = (c) => (c === '1' ? 'П1' : c === 'X' ? 'X' : c === '2' ? 'П2' : String(c));
   const oddOf = (e, c) => (c === '1' ? e.odds_1 : c === 'X' ? e.odds_x : e.odds_2);
@@ -210,7 +223,7 @@
   function openSlip(ev, choice) {
     state.slip = { eventId: ev.id, choice, odds: Number(oddOf(ev, choice)) };
     $('slip-event-title').textContent = ev.title;
-    $('slip-event-choice').textContent = `Ваш выбор: ${choiceLabel(choice)}`;
+    $('slip-event-choice').textContent = `Ваш выбор: ${pickText(ev.title, choice)}`;
     $('slip-odds').textContent = odd2(state.slip.odds);
     $('slip-amount').value = 100;
     updateSlipWin();
@@ -310,7 +323,7 @@
           <button type="button" class="hist ${histClass(h)}" data-action="bet-open" data-idx="${idx}">
             <div class="hist-top"><span class="hist-sport">${esc(h.sport)}</span><span class="hist-meta">Кф ${odd2(h.locked_odds)}</span></div>
             <div class="hist-title">${esc(h.title)}</div>
-            <div class="hist-meta">Исход: ${esc(choiceLabel(h.choice))} · Ставка: ${fmt(h.points)} PTS${legsSummary(h)}</div>
+            <div class="hist-meta">${h.kind === 'express' ? 'Экспресс' : 'Исход: ' + esc(pickText(h.title, h.choice))} · Ставка: ${fmt(h.points)} PTS${legsSummary(h)}</div>
             <div class="hist-status">${st}</div>${tag}
           </button>`;
       }).join('') : '<div class="empty">История пуста.<br>Сделай первую ставку!</div>';
@@ -326,7 +339,7 @@
         <span class="leg-ic">${LEG_ICON[l.status] || '⏳'}</span>
         <div class="leg-main">
           ${single ? '' : `<div class="leg-title">${esc(l.title)}</div>`}
-          <div class="leg-meta">Твой исход: <b>${esc(choiceLabel(l.choice))}</b> · кф ${odd2(l.odds)}${l.result && l.status !== 'pending' ? ` · Итог: <b>${esc(choiceLabel(l.result))}</b>` : ''}</div>
+          <div class="leg-meta">Твой исход: <b>${esc(pickText(l.title, l.choice))}</b> · кф ${odd2(l.odds)}${l.result && l.status !== 'pending' ? ` · Итог: <b>${esc(choiceLabel(l.result))}</b>` : ''}</div>
         </div>
         <span class="leg-st">${LEG_TXT[l.status] || ''}</span>
       </div>`).join('');
@@ -343,7 +356,7 @@
     state.bet = h;
     $('bet-card-title').textContent = h.title;
     $('bet-card-sport').textContent = h.sport;
-    $('bet-card-choice').textContent = choiceLabel(h.choice);
+    $('bet-card-choice').textContent = h.kind === 'express' ? 'Экспресс' : pickText(h.title, h.choice);
     $('bet-card-points').textContent = `${fmt(h.points)} PTS`;
     $('bet-card-odds').textContent = odd2(h.locked_odds);
     const label = $('bet-card-win-label'), win = $('bet-card-win');
@@ -383,7 +396,13 @@
   function shareBet() {
     const b = state.bet;
     if (!b) return;
-    const text = `🔥 Моя ставка в MSPBETS!\n\n🏆 ${b.sport}\n⚔️ ${b.title}\n💰 Ставка: ${b.points} PTS на ${choiceLabel(b.choice)}\n📈 Кф: ${odd2(b.locked_odds)}\n\n👉 Заходи и прогнозируй: ${BOT_LINK}`;
+    let text;
+    if (b.kind === 'express') {
+      const legs = (b.legs || []).map((l, i) => `${i + 1}. ${l.title}\n    ✅ Исход: ${pickText(l.title, l.choice)} · кф ${odd2(l.odds)}`).join('\n');
+      text = `🔥 Мой экспресс в MSPBETS!\n\n${legs}\n\n💰 Ставка: ${b.points} PTS\n📈 Общий кф: ${odd2(b.locked_odds)}\n\n👉 Заходи и прогнозируй: ${BOT_LINK}`;
+    } else {
+      text = `🔥 Моя ставка в MSPBETS!\n\n🏆 ${b.sport}\n⚔️ ${b.title}\n✅ Мой исход: ${pickText(b.title, b.choice)}\n💰 Ставка: ${b.points} PTS\n📈 Кф: ${odd2(b.locked_odds)}\n\n👉 Заходи и прогнозируй: ${BOT_LINK}`;
+    }
     try {
       if (tg && tg.openTelegramLink) {
         tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(BOT_LINK)}&text=${encodeURIComponent(text)}`);
@@ -407,9 +426,9 @@
       const top = rows.slice(0, 3);
       const order = top.length === 3 ? [1, 0, 2] : top.map((_, i) => i);
       const podium = `<div class="podium">${order.map((i) => `
-        <div class="pod p${i + 1}" data-action="player" data-uid="${top[i].user_id}"><div class="medal">${medals[i]}</div><div class="nm">${nm(top[i])}</div><div class="sc">${fmt(top[i].balance)}</div></div>`).join('')}</div>`;
+        <div class="pod p${i + 1}" data-action="player" data-uid="${top[i].user_id}"><div class="medal">${medals[i]}</div>${MSP.U.ava(nm(top[i]), top[i].frame, 'sm', top[i].avatar)}<div class="nm">${nm(top[i])}</div><div class="sc">${fmt(top[i].balance)}</div></div>`).join('')}</div>`;
       const rest = rows.slice(3).map((r, i) => `
-        <div class="rank${isMe(r) ? ' me' : ''}" data-action="player" data-uid="${r.user_id}"><span class="pos">${i + 4}</span><span class="nm">${nm(r)}</span><span class="sc">${fmt(r.balance)} PTS</span></div>`).join('');
+        <div class="rank${isMe(r) ? ' me' : ''}" data-action="player" data-uid="${r.user_id}"><span class="pos">${i + 4}</span>${MSP.U.ava(nm(r), r.frame, 'sm', r.avatar)}<span class="nm">${nm(r)}</span><span class="sc">${fmt(r.balance)} PTS</span></div>`).join('');
       $('rating-list').innerHTML = podium + rest;
     } catch (e) { $('rating-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   }
@@ -592,7 +611,7 @@
   // ---------- Навигация ----------
   async function showTab(name) {
     $$('.panel').forEach((p) => p.classList.toggle('hidden', p.id !== name));
-    const PARENT = { crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', rating: 'profile' };
+    const PARENT = { slots: 'games', crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', rating: 'profile' };
     $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === (PARENT[name] || name)));
     if (window.MSP && MSP.leave) MSP.leave(name);
     window.scrollTo({ top: 0 });
@@ -661,7 +680,7 @@
 
   // ---------- Мост для новых модулей (extra.js, games.js) ----------
   window.MSP = {
-    tg, api, post, toast, ok, fail, dialog, fmt, esc, haptic, sleep, state, showTab, loadMe, animateBalance, openLink,
+    tg, api, post, toast, ok, fail, dialog, fmt, esc, haptic, sleep, state, showTab, loadMe, animateBalance, openLink, pickText,
     renderEvents, loadEvents, tabs: {}, actions: {},
     watchToggle: async (id) => {
       const ev = state.events.find((e) => e.id === id); if (!ev) return;

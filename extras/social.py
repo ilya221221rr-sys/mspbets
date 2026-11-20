@@ -25,6 +25,14 @@ def _level_info(xp):
     return {"level": lvl, "xp": xp, "xp_base": base, "xp_next": nxt, "rank": core.rank_for(lvl), "vip": core.vip_for(lvl)}
 
 
+# Картинки-аватары (файлы лежат в web/avatars/<key>.webp). Доступны всем игрокам.
+AVATARS = [
+    ("pudge", "Pudge"), ("axe", "Axe"), ("wolf", "Кибер-волк"), ("astrocat", "Кот-космонавт"),
+    ("dragon", "Золотой дракон"), ("robot", "Робот"), ("fox", "Самурай-лис"), ("skull", "Король-череп"),
+]
+AVATAR_KEYS = {a[0] for a in AVATARS}
+
+
 def unlocked_frames(level, ach_keys):
     fr = [r[3] for r in core.RANKS if level >= r[0]]
     if "streak_7" in ach_keys:
@@ -47,8 +55,8 @@ def _daily_status(p):
 
 
 def _profile_row(conn, uid):
-    r = one(conn, "SELECT xp, wagered, bets_count, streak, best_streak, last_daily, frame, badge, bio, notify, hide_bets, referrer_id, ref_paid FROM profiles WHERE user_id=?", (uid,))
-    keys = ["xp", "wagered", "bets_count", "streak", "best_streak", "last_daily", "frame", "badge", "bio", "notify", "hide_bets", "referrer_id", "ref_paid"]
+    r = one(conn, "SELECT xp, wagered, bets_count, streak, best_streak, last_daily, frame, badge, bio, notify, hide_bets, referrer_id, ref_paid, COALESCE(avatar, '') FROM profiles WHERE user_id=?", (uid,))
+    keys = ["xp", "wagered", "bets_count", "streak", "best_streak", "last_daily", "frame", "badge", "bio", "notify", "hide_bets", "referrer_id", "ref_paid", "avatar"]
     return dict(zip(keys, r))
 
 
@@ -78,7 +86,7 @@ def me(request: Request):
     d = _daily_status(p)
     return {
         "user_id": uid, "name": core.display_name(user), "first_name": user.get("first_name"), "username": user.get("username"), "balance": bal, **info,
-        "frame": p["frame"], "badge": p["badge"], "bio": p["bio"], "notify": bool(p["notify"]), "hide_bets": bool(p["hide_bets"]),
+        "frame": p["frame"], "avatar": p["avatar"], "avatars": [{"key": k, "title": t} for k, t in AVATARS], "badge": p["badge"], "bio": p["bio"], "notify": bool(p["notify"]), "hide_bets": bool(p["hide_bets"]),
         "frames": unlocked_frames(info["level"], ach), "daily": d, "quests_claimable": claimable,
         "ref_link": f"https://t.me/{core.ctx.bot_username}?start=ref_{uid}", "is_admin": uid in core.ctx.admin_ids,
         "stats": {"wagered": p["wagered"], "bets": p["bets_count"]},
@@ -99,6 +107,11 @@ def settings(request: Request, body: dict = Body(...)):
             if f and f not in unlocked_frames(lvl, ach):
                 raise HTTPException(400, "Рамка ещё не открыта")
             conn.execute("UPDATE profiles SET frame=? WHERE user_id=?", (f, uid))
+        if "avatar" in body:
+            a = str(body["avatar"] or "")
+            if a and a not in AVATAR_KEYS:
+                raise HTTPException(400, "Такого аватара нет")
+            conn.execute("UPDATE profiles SET avatar=? WHERE user_id=?", (a, uid))
         if "badge" in body:
             b = str(body["badge"] or "")
             if b and b not in ach:
@@ -312,7 +325,7 @@ def player(uid: int, request: Request):
     viewer = auth(request)
     with db() as conn:
         u = one(conn, "SELECT first_name, username, balance, created_at FROM users WHERE user_id=?", (uid,))
-        p = one(conn, "SELECT xp, wagered, bets_count, streak, best_streak, frame, badge, bio, hide_bets FROM profiles WHERE user_id=?", (uid,))
+        p = one(conn, "SELECT xp, wagered, bets_count, streak, best_streak, frame, badge, bio, hide_bets, COALESCE(avatar, '') FROM profiles WHERE user_id=?", (uid,))
         if not u:
             raise HTTPException(404, "Игрок не найден")
         xp = p[0] if p else 0
@@ -332,7 +345,7 @@ def player(uid: int, request: Request):
     won, lost = int(w[0] or 0), int(w[1] or 0)
     return {
         "uid": uid, "name": u[0] or u[1] or "Игрок", "username": u[1], "since": u[3], **info,
-        "frame": p[5] if p else "", "badge": p[6] if p else "", "bio": p[7] if p else "",
+        "frame": p[5] if p else "", "avatar": p[9] if p else "", "badge": p[6] if p else "", "bio": p[7] if p else "",
         "stats": {"bets": p[2] if p else 0, "wagered": p[1] if p else 0, "streak": p[3] if p else 0, "best_streak": p[4] if p else 0,
                   "won": won, "lost": lost, "winrate": round(won * 100 / (won + lost), 1) if won + lost else None, "biggest_win": best[0] if best else 0},
         "badges": [core.ach_info(a[0]) for a in ach if a[0] in ACH][:24],
@@ -346,7 +359,7 @@ def feed(request: Request):
     with db() as conn:
         rows = all_(
             conn,
-            "SELECT p.id, p.user_id, u.first_name, p.event_id, e.title, p.choice, p.locked_odds, p.points, e.odds_1, e.odds_x, e.odds_2, e.sport, pr.xp "
+            "SELECT p.id, p.user_id, u.first_name, p.event_id, e.title, p.choice, p.locked_odds, p.points, e.odds_1, e.odds_x, e.odds_2, e.sport, pr.xp, COALESCE(pr.avatar, ''), COALESCE(pr.frame, '') "
             "FROM predictions p JOIN events e ON e.id=p.event_id JOIN users u ON u.user_id=p.user_id "
             "LEFT JOIN profiles pr ON pr.user_id=p.user_id "
             "WHERE e.status='open' AND p.status='pending' AND COALESCE(pr.hide_bets,0)=0 ORDER BY p.id DESC LIMIT 30",
@@ -355,7 +368,7 @@ def feed(request: Request):
     for r in rows:
         now = {"1": r[8], "X": r[9], "2": r[10]}.get(r[5])
         out.append({"pred_id": r[0], "uid": r[1], "name": r[2] or "Игрок", "event_id": r[3], "title": r[4], "choice": r[5], "odds": r[6],
-                    "points": r[7], "odds_now": now, "sport": r[11], "level": core.level_for(r[12] or 0)})
+                    "points": r[7], "odds_now": now, "sport": r[11], "level": core.level_for(r[12] or 0), "avatar": r[13], "frame": r[14]})
     return out
 
 

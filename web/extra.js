@@ -21,7 +21,10 @@
   }
   const head = (t, p) => `<div class="panel-head"><h2>${t}</h2>${p ? `<p>${p}</p>` : ''}</div>`;
   const back = (to, label) => `<button class="back" type="button" data-tab="${to}">← ${label}</button>`;
-  const ava = (name, frame, cls = '') => `<span class="ava ${cls} ${frame ? 'fr-' + esc(frame) : ''}">${esc((name || '?').trim().charAt(0).toUpperCase())}</span>`;
+  const AVA_OK = /^[a-z0-9_-]{1,24}$/;
+  const ava = (name, frame, cls = '', avatar = '') => (avatar && AVA_OK.test(avatar)
+    ? `<span class="ava ${cls} has-img ${frame ? 'fr-' + esc(frame) : ''}"><img src="/web/avatars/${avatar}.webp" alt="" loading="lazy" decoding="async"></span>`
+    : `<span class="ava ${cls} ${frame ? 'fr-' + esc(frame) : ''}">${esc((name || '?').trim().charAt(0).toUpperCase())}</span>`);
   const dt = (iso) => { try { return new Date(iso).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
   const loading = '<div class="skeleton"></div><div class="skeleton"></div>';
   const copyText = async (t) => {
@@ -76,7 +79,7 @@
       chip.id = 'lvl-chip'; chip.className = 'lvl-chip'; chip.type = 'button'; chip.dataset.tab = 'profile';
       document.querySelector('.topbar').insertBefore(chip, document.querySelector('.wallet'));
     }
-    chip.innerHTML = `${ava(me.name, me.frame, 'sm')} LV <b>${me.level}</b>`;
+    chip.innerHTML = `${ava(me.name, me.frame, 'sm', me.avatar)} LV <b>${me.level}</b>`;
     const dot = $('dot-bonus');
     if (dot) dot.classList.toggle('hidden', !((me.daily && !me.daily.claimed) || me.quests_claimable > 0));
   };
@@ -87,6 +90,7 @@
   panel('games', head('Игры', 'Все игры на баллы · честный RTP · результат считает сервер') + `
     <div class="hub">
       <button class="hub-card wide" data-tab="crash" style="--hc:#22D3EE"><span class="hub-ico">🚀</span><span class="hub-name">Краш</span><span class="hub-sub">Нажми «Играть» · забери до крэша · RTP 96%</span></button>
+      <button class="hub-card wide" data-tab="slots" style="--hc:#FF5DAE"><span class="hub-ico">🎰</span><span class="hub-name">Слоты · демо</span><span class="hub-sub">Pragmatic Play, Hacksaw (Le Zeus) и другие · без трат PTS</span></button>
       <button class="hub-card" data-tab="mines" style="--hc:#FF5D7A"><span class="hub-ico">💣</span><span class="hub-name">Мины</span><span class="hub-sub">Поле 5×5 · RTP 97%</span></button>
       <button class="hub-card" data-tab="plinko" style="--hc:#B26BFF"><span class="hub-ico">🔮</span><span class="hub-name">Plinko</span><span class="hub-sub">До x1000 · RTP 96%</span></button>
       <button class="hub-card" data-tab="dice" style="--hc:#2EE59D"><span class="hub-ico">🎲</span><span class="hub-name">Dice</span><span class="hub-sub">Свой шанс · RTP 97%</span></button>
@@ -153,11 +157,12 @@
     const pct = Math.min(100, (me.xp - me.xp_base) / Math.max(1, me.xp_next - me.xp_base) * 100);
     const ALLF = [['', 'Нет'], ['bronze', ''], ['silver', ''], ['gold', ''], ['platinum', ''], ['diamond', ''], ['legend', ''], ['streak', '']];
     const frames = ALLF.map(([f]) => `<span class="ava sm ${f ? 'fr-' + f : ''} ${me.frames.includes(f) || !f ? '' : ''}" data-action="frame-set" data-f="${f}" style="${me.frames.includes(f) || !f ? '' : 'filter:grayscale(1);opacity:.3'}" title="${f || 'без рамки'}"><i style="font-style:normal" class="${me.frame === f ? 'on' : ''}">${me.frame === f ? '✓' : (f ? '' : '∅')}</i></span>`).join('');
+    const avatars = `<button type="button" class="none ${me.avatar ? '' : 'on'}" data-action="avatar-set" data-a="">Буква</button>` + (me.avatars || []).map((a) => `<button type="button" class="${me.avatar === a.key ? 'on' : ''}" data-action="avatar-set" data-a="${esc(a.key)}" title="${esc(a.title)}"><img src="/web/avatars/${esc(a.key)}.webp" alt="${esc(a.title)}" loading="lazy" decoding="async"><small>${esc(a.title)}</small></button>`).join('');
     const got = ach.items.filter((a) => a.unlocked);
     const badges = got.length ? got.map((a) => `<button type="button" class="${ach.badge === a.key ? 'on' : ''}" data-action="badge-set" data-k="${a.key}" title="${esc(a.title)}">${a.icon}</button>`).join('') : '<span class="muted-note" style="border:0;background:none;width:auto">Пока нет бейджей — выполняй достижения</span>';
     $('profile-body').innerHTML = `
       <div class="gcard">
-        <div class="prof-head">${ava(me.name, me.frame, 'lg')}<div style="min-width:0"><div class="nm">${esc(me.name)} ${ach.badge ? (got.find((a) => a.key === ach.badge) || {}).icon || '' : ''}</div>
+        <div class="prof-head">${ava(me.name, me.frame, 'lg', me.avatar)}<div style="min-width:0"><div class="nm">${esc(me.name)} ${ach.badge ? (got.find((a) => a.key === ach.badge) || {}).icon || '' : ''}</div>
           <span class="rank-tag" style="--rc:${me.rank.color}">${esc(me.rank.name)}</span>${me.vip ? `<span class="vip">VIP ${me.vip}</span>` : ''}
           <div class="muted-note" style="margin-top:4px">${esc(me.bio || 'Добавь статус о себе')} <a data-action="bio-edit" style="color:var(--primary-2)">✎</a></div></div></div>
         <div style="margin-top:14px;display:flex;justify-content:space-between;font-size:12px;font-weight:700"><span>Уровень ${me.level}</span><span class="muted-note" style="border:0;background:none;width:auto">${fmt(me.xp)} / ${fmt(me.xp_next)} XP</span></div>
@@ -166,7 +171,8 @@
       </div>
       <div class="gcard"><div class="stat-row"><span>Поставлено всего</span><b>${fmt(me.stats.wagered)} PTS</b></div><div class="stat-row"><span>Ставок и игр</span><b>${fmt(me.stats.bets)}</b></div>
         <div class="stat-row"><span>Серия бонуса</span><b>🔥 ${me.daily.streak} (рекорд ${me.daily.best})</b></div></div>
-      <div class="gcard"><div class="label">Рамка аватара</div><div class="frames">${frames}</div><div class="label" style="margin-top:14px">Бейдж</div><div class="badges">${badges}</div>
+      <div class="gcard"><div class="label">Аватар</div><div class="avatars">${avatars}</div>
+        <div class="label" style="margin-top:14px">Рамка аватара</div><div class="frames">${frames}</div><div class="label" style="margin-top:14px">Бейдж</div><div class="badges">${badges}</div>
         <div class="toggle" style="margin-top:8px"><span>🔔 Уведомления в боте</span><button class="sw ${me.notify ? 'on' : ''}" data-action="toggle-notify" aria-label="переключить"></button></div>
         <div class="toggle"><span>🙈 Скрыть мои ставки от других</span><button class="sw ${me.hide_bets ? 'on' : ''}" data-action="toggle-hide" aria-label="переключить"></button></div></div>
       <div class="menu">
@@ -183,6 +189,7 @@
   };
   M.actions.promo = () => $('btn-promo').click();
   const setting = (body) => post('/api/v2/profile/settings', body).then(() => M.tabs.profile()).catch(fail);
+  M.actions['avatar-set'] = (el) => setting({ avatar: el.dataset.a });
   M.actions['frame-set'] = (el) => setting({ frame: el.dataset.f });
   M.actions['badge-set'] = (el) => setting({ badge: state.badgeCur === el.dataset.k ? '' : el.dataset.k });
   M.actions['toggle-notify'] = () => setting({ notify: !state.me.notify });
@@ -252,9 +259,9 @@
     $('social-body').innerHTML = loading;
     const rows = await api('/api/v2/social/feed');
     $('social-body').innerHTML = rows.map((r) => `<div class="feed-bet">
-      <div class="feed-top" data-action="player" data-uid="${r.uid}">${ava(r.name, '', 'sm')}<span>${esc(r.name)}</span><span class="lv">LV ${r.level}</span></div>
+      <div class="feed-top" data-action="player" data-uid="${r.uid}">${ava(r.name, r.frame, 'sm', r.avatar)}<span>${esc(r.name)}</span><span class="lv">LV ${r.level}</span></div>
       <div class="feed-ev">${esc(r.title)}</div>
-      <div class="feed-meta">${CH[r.choice] || r.choice} · ставка <b>${fmt(r.points)}</b> · кф <b>${Number(r.odds).toFixed(2)}</b>${r.odds_now && Math.abs(r.odds_now - r.odds) > 0.009 ? ` → сейчас <b class="${r.odds_now > r.odds ? 'up' : 'down'}">${Number(r.odds_now).toFixed(2)}</b>` : ''}</div>
+      <div class="feed-meta">${esc(M.pickText(r.title, r.choice))} · ставка <b>${fmt(r.points)}</b> · кф <b>${Number(r.odds).toFixed(2)}</b>${r.odds_now && Math.abs(r.odds_now - r.odds) > 0.009 ? ` → сейчас <b class="${r.odds_now > r.odds ? 'up' : 'down'}">${Number(r.odds_now).toFixed(2)}</b>` : ''}</div>
       <button class="btn btn-sm btn-primary" data-action="copy-bet" data-id="${r.pred_id}" data-ev="${esc(r.title)}">Скопировать ставку</button></div>`).join('') || '<div class="empty">Пока нет ставок на открытые матчи</div>';
   };
   M.actions['copy-bet'] = async (el) => {
@@ -266,7 +273,7 @@
   async function loadPlayer(uid) {
     $('player-body').innerHTML = loading;
     const p = await api('/api/v2/player/' + uid); const s = p.stats;
-    $('player-body').innerHTML = `<div class="gcard"><div class="prof-head">${ava(p.name, p.frame, 'lg')}<div><div class="nm">${esc(p.name)}</div>
+    $('player-body').innerHTML = `<div class="gcard"><div class="prof-head">${ava(p.name, p.frame, 'lg', p.avatar)}<div><div class="nm">${esc(p.name)}</div>
       <span class="rank-tag" style="--rc:${p.rank.color}">${esc(p.rank.name)} · LV ${p.level}</span>${p.vip ? `<span class="vip">VIP ${p.vip}</span>` : ''}
       <div class="muted-note" style="margin-top:4px">${esc(p.bio || '')}</div></div></div>
       <div class="stat-row" style="margin-top:12px"><span>Ставок и игр</span><b>${fmt(s.bets)}</b></div><div class="stat-row"><span>Побед / поражений (матчи)</span><b>${s.won} / ${s.lost}${s.winrate != null ? ` · ${s.winrate}%` : ''}</b></div>
@@ -274,7 +281,7 @@
       ${p.badges.length ? `<div class="badges">${p.badges.map((b) => `<span title="${esc(b.title)}">${b.icon}</span>`).join('')}</div>` : ''}</div>
       <div class="sub-head">Последние ставки</div>
       ${p.hidden ? '<div class="empty">Игрок скрыл свои ставки</div>' : p.bets.map((b) => `<div class="feed-bet"><div class="feed-ev">${esc(b.title)}</div>
-        <div class="feed-meta">${CH[b.choice] || b.choice} · ${fmt(b.points)} PTS · кф ${Number(b.odds).toFixed(2)} · ${b.status === 'won' ? '<b class="up">выиграла</b>' : b.status === 'lost' ? '<b class="down">проиграла</b>' : b.status === 'void' ? 'возврат' : 'в игре'}</div>
+        <div class="feed-meta">${esc(M.pickText(b.title, b.choice))} · ${fmt(b.points)} PTS · кф ${Number(b.odds).toFixed(2)} · ${b.status === 'won' ? '<b class="up">выиграла</b>' : b.status === 'lost' ? '<b class="down">проиграла</b>' : b.status === 'void' ? 'возврат' : 'в игре'}</div>
         ${b.open && !p.me ? `<button class="btn btn-sm btn-primary" data-action="copy-bet" data-id="${b.pred_id}" data-ev="${esc(b.title)}">Скопировать</button>` : ''}</div>`).join('') || '<div class="empty">Ставок пока нет</div>'}`;
   }
   M.actions.player = async (el) => { if (!el.dataset.uid || el.dataset.uid === 'undefined') return; await M.showTab('player'); loadPlayer(el.dataset.uid).catch(fail); };

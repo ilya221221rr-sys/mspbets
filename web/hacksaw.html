@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="robots" content="noindex">
+<title>Hacksaw · демо</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #Game { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  #msg { position: absolute; inset: 0; display: grid; place-items: center; color: #9aa3c0; font: 600 14px system-ui, sans-serif; text-align: center; padding: 24px; pointer-events: none; }
+</style>
+</head>
+<body>
+<iframe id="Game" allow="autoplay; fullscreen" allowfullscreen></iframe>
+<div id="msg">Загрузка игры…</div>
+<script src="https://static-live.hacksawgaming.com/launcher/hacksaw-launcher.min.js"></script>
+<script>
+  // Демо-режим Hacksaw Gaming: тот же запуск, что и на официальном сайте hacksawgaming.com (partner=demo, mode=demo).
+  // Лаунчер сам запрашивает актуальную версию игры, поэтому ссылки не «протухают» после обновлений.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var gameid = (q.get('gameid') || '').replace(/[^0-9]/g, '');
+    var msg = document.getElementById('msg');
+    if (!gameid) { msg.textContent = 'Игра не выбрана'; return; }
+    if (!window.hacksaw || !window.hacksaw.include) { msg.textContent = 'Не удалось загрузить игру. Попробуйте открыть её в браузере (кнопка ↗).'; return; }
+    var lobby = location.origin + '/web/slot-close.html';
+    var wide = window.innerWidth >= 900 && window.innerHeight >= 600;
+    try {
+      window.hacksaw.include('Game', {
+        gameid: gameid,
+        channel: wide ? 'desktop' : 'mobile',
+        token: '123131',
+        language: q.get('lang') === 'en' ? 'en' : 'ru',
+        currency: 'EUR',
+        partner: 'demo',
+        mode: 'demo',
+        lobbyurl: lobby
+      });
+      setTimeout(function () { msg.style.display = 'none'; }, 1500);
+    } catch (e) { msg.textContent = 'Ошибка запуска: ' + e.message; }
+  })();
+</script>
+</body>
+</html>

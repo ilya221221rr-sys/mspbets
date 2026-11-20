@@ -181,6 +181,7 @@ ALTERS = [
     "ALTER TABLE cases ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE predictions ADD COLUMN cashout INTEGER",  # сумма выкупа ординара
     "ALTER TABLE bets ADD COLUMN cashout INTEGER",  # сумма выкупа экспресса
+    "ALTER TABLE profiles ADD COLUMN avatar TEXT DEFAULT ''",  # выбранная картинка-аватар
 ]
 
 

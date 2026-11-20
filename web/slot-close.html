@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Закрытие слота</title>
+<style>html,body{margin:0;height:100%;background:#090A12;color:#9aa3c0;font:600 14px system-ui,sans-serif;display:grid;place-items:center}</style>
+</head>
+<body>
+<div>Возвращаемся в MSPBETS…</div>
+<script>
+  // Провайдер перенаправляет сюда, когда игрок нажимает «домой» в слоте. Просим приложение закрыть окно слота.
+  try { window.top.postMessage({ mspSlotClose: true }, location.origin); } catch (e) {}
+  try { window.parent.postMessage({ mspSlotClose: true }, location.origin); } catch (e) {}
+</script>
+</body>
+</html>

@@ -53,6 +53,15 @@ with TestClient(A.app) as c:
     me = u.get("/api/v2/me").json(); check("v2/me", me["balance"] == 1000 and me["level"] == 1, me)
     check("legacy /api/me", u.get("/api/me").json()["balance"] == 1000)
     check("без авторизации 401", c.get("/api/v2/me").status_code == 401)
+    print("\n== аватары")
+    check("в /me есть список аватаров (pudge, axe)", {"pudge", "axe"} <= {a["key"] for a in me["avatars"]} and me["avatar"] == "", me.get("avatars"))
+    check("все файлы аватаров существуют", all(os.path.exists(f"web/avatars/{a['key']}.webp") for a in me["avatars"]))
+    check("выбор аватара pudge", u.post("/api/v2/profile/settings", {"avatar": "pudge"}).status_code == 200)
+    check("аватар сохранился", u.get("/api/v2/me").json()["avatar"] == "pudge")
+    check("чужой/выдуманный аватар отклонён", u.post("/api/v2/profile/settings", {"avatar": "../../etc/passwd"}).status_code == 400)
+    check("аватар виден в профиле игрока", u.get("/api/v2/player/100").json()["avatar"] == "pudge")
+    check("аватар виден в рейтинге", any(r.get("avatar") == "pudge" for r in u.get("/api/rating").json()))
+    check("сброс аватара", u.post("/api/v2/profile/settings", {"avatar": ""}).status_code == 200 and u.get("/api/v2/me").json()["avatar"] == "")
 
     print("\n== кейсы")
     cs = u.get("/api/v2/cases").json()["cases"]
@@ -266,20 +275,21 @@ with TestClient(A.app) as c:
     check("статус фида для админа", adm.get("/api/v2/admin/feed/status").status_code == 200)
     check("статус фида недоступен игроку", u.get("/api/v2/admin/feed/status").status_code == 403)
 
-    print("\n== оптимизация: окно матчей 24 ч, пул соединений, кэш")
+    print("\n== оптимизация: окно матчей 48 ч, пул соединений, кэш")
     from datetime import datetime, timedelta, timezone
     iso = lambda h: (datetime.now(timezone.utc) + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     with core.db() as conn:
         ids = {}
-        for tag, st, h in (("soon", "open", 5), ("far", "open", 30), ("started", "open", -1), ("closed_soon", "closed", 3)):
+        for tag, st, h in (("soon", "open", 5), ("mid", "open", 40), ("far", "open", 60), ("started", "open", -1), ("closed_soon", "closed", 3)):
             ids[tag] = conn.execute("INSERT INTO events (sport,title,starts_at,status,odds_1,odds_x,odds_2,created_at) VALUES ('Футбол',?,?,?,2,3,2,?)",
                                     (f"W-{tag} — X", iso(h), st, core.now_iso())).lastrowid
         ids["manual"] = conn.execute("INSERT INTO events (sport,title,status,odds_1,odds_x,odds_2,created_at) VALUES ('Футбол','W-manual — X','open',2,3,2,?)", (core.now_iso(),)).lastrowid
     A.invalidate_events()
     pub = {e["title"].split(" — ")[0] for e in u.get("/api/events").json()}
     check("матч через 5 ч виден", "W-soon" in pub, pub)
+    check("матч через 40 ч виден (окно 48 ч)", "W-mid" in pub)
     check("ручной матч без даты виден", "W-manual" in pub)
-    check("матч через 30 ч скрыт", "W-far" not in pub)
+    check("матч через 60 ч скрыт", "W-far" not in pub)
     check("начавшийся матч скрыт", "W-started" not in pub)
     check("закрытый матч скрыт у игрока", "W-closed_soon" not in pub)
     adm_all = {e["title"].split(" — ")[0] for e in adm.get("/api/events?all=1").json()}

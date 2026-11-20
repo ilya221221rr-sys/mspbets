@@ -401,15 +401,15 @@ def me(request: Request):
 def get_rating(request: Request):
     current_user(request)
     conn = get_db()
-    cur = conn.execute("""SELECT u.first_name, u.username, u.balance, u.user_id, COALESCE(p.xp, 0), COALESCE(p.frame, '')
+    cur = conn.execute("""SELECT u.first_name, u.username, u.balance, u.user_id, COALESCE(p.xp, 0), COALESCE(p.frame, ''), COALESCE(p.avatar, '')
         FROM users u LEFT JOIN profiles p ON p.user_id = u.user_id ORDER BY u.balance DESC LIMIT 50""")
     rows = cur.fetchall()
     conn.close()
     return [{"first_name": r[0], "username": r[1], "balance": r[2], "user_id": r[3],
-             "level": extras.core.level_for(r[4]), "frame": r[5]} for r in rows]
+             "level": extras.core.level_for(r[4]), "frame": r[5], "avatar": r[6]} for r in rows]
 
-# Окно матчей: в списке только матчи, которые начнутся в ближайшие EVENTS_WINDOW_HOURS (по умолчанию 24 ч)
-EVENTS_WINDOW_H = max(1, int(os.getenv("EVENTS_WINDOW_HOURS", "24")))
+# Окно матчей: в списке только матчи, которые начнутся в ближайшие EVENTS_WINDOW_HOURS (по умолчанию 48 ч)
+EVENTS_WINDOW_H = max(1, int(os.getenv("EVENTS_WINDOW_HOURS", "48")))
 EVENTS_TTL = float(os.getenv("EVENTS_CACHE_SECONDS", "10"))
 _ISO = "%Y-%m-%dT%H:%M:%S+00:00"
 _events_cache = {}
@@ -429,7 +429,7 @@ def _events_rows(include_all):
                 WHERE e.status <> 'settled' OR e.id IN (SELECT id FROM events WHERE status='settled' ORDER BY id DESC LIMIT 30)
                 ORDER BY CASE WHEN e.status='open' THEN 0 ELSE 1 END, CASE WHEN e.starts_at IS NULL THEN 0 ELSE 1 END,
                          COALESCE(e.starts_at, ''), e.id DESC LIMIT 300""")
-        else:  # игроки: только открытые матчи ближайших 24 часов (+ ручные матчи админа без даты)
+        else:  # игроки: только открытые матчи ближайших 48 часов (+ ручные матчи админа без даты)
             cur = conn.execute("""SELECT e.id, e.sport, e.title, e.status, e.odds_1, e.odds_x, e.odds_2, e.starts_at, f.league
                 FROM events e LEFT JOIN feed_events f ON f.event_id = e.id
                 WHERE e.status = 'open' AND (e.starts_at IS NULL OR (e.starts_at > ? AND e.starts_at <= ?))

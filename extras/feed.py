@@ -9,7 +9,7 @@ extras/feed.py — автоматическая загрузка матчей и
      линии букмекеров, поэтому кэфы считаются по рейтингу Эло, собранному из последних матчей.
 
 Что делает:
-  * каждые FEED_SYNC_MINUTES добавляет новые матчи (ближайшие FEED_WINDOW_HOURS часов, по умолчанию 24) и обновляет кэфы
+  * каждые FEED_SYNC_MINUTES добавляет новые матчи (ближайшие FEED_WINDOW_HOURS часов, по умолчанию 48) и обновляет кэфы
     (рост кэфа → уведомления подписчикам 🔔);
   * закрывает приём ставок в момент начала матча (starts_at);
   * после окончания сам рассчитывает матч (тот же код, что и админский расчёт) и шлёт игрокам
@@ -33,12 +33,12 @@ router = APIRouter(prefix="/api/v2/admin/feed")
 
 ENABLED = os.getenv("FEED_ENABLED", "1") not in ("0", "false", "False", "")
 SYNC_MIN = max(5, int(os.getenv("FEED_SYNC_MINUTES", "20")))
-# Окно загрузки: берём только матчи, которые начнутся в ближайшие FEED_WINDOW_HOURS часов (по умолчанию 24).
+# Окно загрузки: берём только матчи, которые начнутся в ближайшие FEED_WINDOW_HOURS часов (по умолчанию 48).
 # (старая переменная FEED_DAYS больше не используется)
-WINDOW_H = max(1, int(os.getenv("FEED_WINDOW_HOURS", "24")))
+WINDOW_H = max(1, int(os.getenv("FEED_WINDOW_HOURS", "48")))
 MARGIN = float(os.getenv("FEED_MARGIN", "0.06"))
-PER_LEAGUE = int(os.getenv("FEED_PER_LEAGUE", "8"))
-MAX_OPEN = int(os.getenv("FEED_MAX_OPEN", "60"))
+PER_LEAGUE = int(os.getenv("FEED_PER_LEAGUE", "12"))
+MAX_OPEN = int(os.getenv("FEED_MAX_OPEN", "100"))
 BROADCAST = os.getenv("FEED_BROADCAST", "0") in ("1", "true", "True")
 PANDA_TOKEN = os.getenv("PANDASCORE_TOKEN", "")
 ESPN = "https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard"
