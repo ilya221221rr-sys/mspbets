@@ -174,7 +174,7 @@
         <button data-tab="history"><span class="i">🎯</span>История ставок</button>
         <button data-tab="achievements"><span class="i">🏅</span>Достижения<small>${got.length}/${ach.items.length}</small></button>
         <button data-tab="social"><span class="i">👥</span>Лента ставок игроков<small>копируй ставки</small></button>
-        <button data-tab="referral"><span class="i">🤝</span>Пригласить друга<small>+${fmt(300)} PTS</small></button>
+        <button data-tab="referral"><span class="i">🤝</span>Пригласить друга<small>+${fmt(10000)} PTS</small></button>
         <button data-tab="rating"><span class="i">👑</span>Топ игроков</button>
         <button data-tab="news"><span class="i">📰</span>Новости Dota 2</button>
         <button data-action="promo"><span class="i">🎟️</span>Ввести промокод</button>
@@ -195,7 +195,7 @@
   // ==========================================================
   //  ЖУРНАЛ ОПЕРАЦИЙ
   // ==========================================================
-  const KIND = { bet: ['🎯', 'Ставка на матч'], win: ['🏆', 'Выигрыш'], refund: ['↩️', 'Возврат'], game_bet: ['🎮', 'Ставка в игре'], game_win: ['🎰', 'Выигрыш в игре'], case: ['📦', 'Кейс'], sell: ['💱', 'Продажа предметов'], daily: ['📅', 'Ежедневный бонус'], quest: ['✅', 'Задание'], achievement: ['🏅', 'Достижение'], levelup: ['⭐', 'Новый уровень'], referral: ['🤝', 'Рефералка'], tournament: ['🏆', 'Турнир'], collection: ['🗂️', 'Коллекция'], promo: ['🎟️', 'Промокод'], admin: ['🛠️', 'Админ'] };
+  const KIND = { bet: ['🎯', 'Ставка на матч'], win: ['🏆', 'Выигрыш'], refund: ['↩️', 'Возврат'], cashout: ['💸', 'Выкуп ставки'], game_bet: ['🎮', 'Ставка в игре'], game_win: ['🎰', 'Выигрыш в игре'], case: ['📦', 'Кейс'], sell: ['💱', 'Продажа предметов'], daily: ['📅', 'Ежедневный бонус'], quest: ['✅', 'Задание'], achievement: ['🏅', 'Достижение'], levelup: ['⭐', 'Новый уровень'], referral: ['🤝', 'Рефералка'], tournament: ['🏆', 'Турнир'], collection: ['🗂️', 'Коллекция'], promo: ['🎟️', 'Промокод'], admin: ['🛠️', 'Админ'] };
   panel('ledger', back('profile', 'Профиль') + head('Журнал операций', 'Любое движение баллов записано') + '<div id="ledger-list"></div><button id="ledger-more" class="btn btn-ghost btn-block hidden" data-action="ledger-more">Показать ещё</button>');
   let ledgerLast = 0;
   async function loadLedger(more) {

@@ -286,24 +286,57 @@
   }
 
   // ---------- История и карточка ставки ----------
+  const LEG_ICON = { won: '✅', lost: '❌', void: '↩️', pending: '⏳' };
+  const LEG_TXT = { won: 'Зашло', lost: 'Не зашло', void: 'Возврат', pending: 'Ожидает' };
+  const potentialOf = (h) => Math.floor(h.points * h.locked_odds);
+  const histClass = (h) => (h.status === 'won' ? 'won' : h.status === 'lost' ? 'lost' : h.status === 'cashed' ? 'cashed' : 'pending');
+
+  function legsSummary(h) {
+    if (h.kind !== 'express') return '';
+    const won = h.legs.filter((l) => l.status === 'won').length;
+    return ` · Зашло ${won} из ${h.legs.length}`;
+  }
+
   async function loadHistory() {
     $('history-list').innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
     try {
       const hist = await api('/api/history');
       $('history-list').innerHTML = hist.length ? hist.map((h, idx) => {
-        const cls = h.status === 'won' ? 'won' : h.status === 'lost' ? 'lost' : 'pending';
-        const st = h.status === 'won' ? `Выиграл: +${fmt(Math.floor(h.points * h.locked_odds))} PTS`
-          : h.status === 'lost' ? 'Проиграл' : h.status === 'void' ? 'Возврат ставки' : 'В ожидании';
+        const st = h.status === 'won' ? `Выиграл: +${fmt(potentialOf(h))} PTS`
+          : h.status === 'lost' ? 'Проиграл' : h.status === 'void' ? 'Возврат ставки'
+          : h.status === 'cashed' ? `Выкуплена: +${fmt(h.cashout || 0)} PTS` : 'В ожидании';
+        const tag = h.cashout_offer ? `<span class="hist-tag">💸 Выкуп ${fmt(h.cashout_offer)}</span>` : '';
         return `
-          <button type="button" class="hist ${cls}" data-action="bet-open" data-idx="${idx}">
+          <button type="button" class="hist ${histClass(h)}" data-action="bet-open" data-idx="${idx}">
             <div class="hist-top"><span class="hist-sport">${esc(h.sport)}</span><span class="hist-meta">Кф ${odd2(h.locked_odds)}</span></div>
             <div class="hist-title">${esc(h.title)}</div>
-            <div class="hist-meta">Исход: ${esc(choiceLabel(h.choice))} · Ставка: ${fmt(h.points)} PTS</div>
-            <div class="hist-status">${st}</div>
+            <div class="hist-meta">Исход: ${esc(choiceLabel(h.choice))} · Ставка: ${fmt(h.points)} PTS${legsSummary(h)}</div>
+            <div class="hist-status">${st}</div>${tag}
           </button>`;
       }).join('') : '<div class="empty">История пуста.<br>Сделай первую ставку!</div>';
       state.history = hist;
     } catch (e) { $('history-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+
+  function legsHtml(h) {
+    const single = h.kind !== 'express';
+    const head = single ? 'Итог матча' : 'Исходы событий';
+    return `<div class="bet-legs-head"><span>${head}</span><span>${legsSummary(h).replace(' · ', '')}</span></div>` + h.legs.map((l) => `
+      <div class="leg ${l.status}">
+        <span class="leg-ic">${LEG_ICON[l.status] || '⏳'}</span>
+        <div class="leg-main">
+          ${single ? '' : `<div class="leg-title">${esc(l.title)}</div>`}
+          <div class="leg-meta">Твой исход: <b>${esc(choiceLabel(l.choice))}</b> · кф ${odd2(l.odds)}${l.result && l.status !== 'pending' ? ` · Итог: <b>${esc(choiceLabel(l.result))}</b>` : ''}</div>
+        </div>
+        <span class="leg-st">${LEG_TXT[l.status] || ''}</span>
+      </div>`).join('');
+  }
+
+  function setCashoutBtn(h, offer) {
+    const btn = $('bet-cashout-btn');
+    if (h) h.cashout_offer = offer || null;
+    if (offer) { btn.textContent = `💸 Выкупить за ${fmt(offer)} PTS`; btn.classList.remove('hidden'); }
+    else btn.classList.add('hidden');
   }
 
   function openBetCard(h) {
@@ -313,11 +346,38 @@
     $('bet-card-choice').textContent = choiceLabel(h.choice);
     $('bet-card-points').textContent = `${fmt(h.points)} PTS`;
     $('bet-card-odds').textContent = odd2(h.locked_odds);
-    $('bet-card-win').textContent = `${fmt(Math.floor(h.points * h.locked_odds))} PTS`;
+    const label = $('bet-card-win-label'), win = $('bet-card-win');
+    if (h.status === 'cashed') { label.textContent = 'Выкуп'; win.textContent = `${fmt(h.cashout || 0)} PTS`; }
+    else if (h.status === 'lost') { label.textContent = 'Выигрыш'; win.textContent = '0 PTS'; }
+    else if (h.status === 'void') { label.textContent = 'Возврат'; win.textContent = `${fmt(h.points)} PTS`; }
+    else { label.textContent = h.status === 'won' ? 'Выигрыш' : 'Возможный выигрыш'; win.textContent = `${fmt(potentialOf(h))} PTS`; }
     const banner = $('bet-card-banner');
-    banner.className = 'bet-banner' + (h.status === 'won' ? ' won' : h.status === 'lost' ? ' lost' : '');
-    $('bet-card-status').textContent = h.status === 'won' ? 'Выигрыш' : h.status === 'lost' ? 'Проигрыш' : 'В ожидании';
+    banner.className = 'bet-banner' + (h.status === 'won' ? ' won' : h.status === 'lost' ? ' lost' : h.status === 'cashed' ? ' cashed' : '');
+    $('bet-card-status').textContent = { won: 'Выигрыш', lost: 'Проигрыш', cashed: 'Выкуплена', void: 'Возврат' }[h.status] || 'В ожидании';
+    $('bet-card-legs').innerHTML = legsHtml(h);
+    setCashoutBtn(h, h.status === 'pending' ? h.cashout_offer : null);
     show('bet-modal');
+    if (h.status === 'pending' && h.cashout_offer) {  // подтягиваем свежую цену выкупа
+      api(`/api/cashout/offer?kind=${h.kind}&id=${h.id}`).then((r) => { if (state.bet === h) setCashoutBtn(h, r.offer); }).catch(() => {});
+    }
+  }
+
+  async function cashoutBet() {
+    const h = state.bet;
+    if (!h || !h.cashout_offer || state.busy) return;
+    const ok_ = await dialog({ title: 'Выкупить ставку?', text: `Ставка ${fmt(h.points)} PTS будет закрыта сейчас, вы получите ${fmt(h.cashout_offer)} PTS. Дождаться результата уже не получится.`, okText: 'Выкупить' });
+    if (!ok_) return;
+    state.busy = true;
+    try {
+      const r = await post('/api/cashout', { kind: h.kind, id: h.id, expected: h.cashout_offer });
+      ok(r.message || 'Ставка выкуплена');
+      hide('bet-modal');
+      await loadMe();
+      await loadHistory();
+    } catch (e) {
+      fail(e);
+      try { const r = await api(`/api/cashout/offer?kind=${h.kind}&id=${h.id}`); setCashoutBtn(h, r.offer); } catch (_) {}
+    } finally { state.busy = false; }
   }
 
   function shareBet() {
@@ -393,7 +453,7 @@
       const opts = '<option value="" disabled selected>Выберите игрока...</option>' +
         users.map((u) => `<option value="${esc(u.user_id)}">${esc(u.first_name || 'Без имени')} (@${esc(u.username || u.user_id)})</option>`).join('');
       $('drop-user-id').innerHTML = opts;
-      $('settings-user-id').innerHTML = opts;
+      if ($('settings-user-id')) $('settings-user-id').innerHTML = opts;
     } catch (_) {}
   }
 
@@ -404,10 +464,10 @@
       const report = await api('/api/admin/bets-report');
       if (!report || !report.length) { box.innerHTML = '<div class="empty">Ставок пока нет.</div>'; return; }
       box.innerHTML = report.map((r) => `
-        <div class="rep ${r.status === 'won' ? 'won' : r.status === 'lost' ? 'lost' : ''}">
+        <div class="rep ${r.status === 'won' ? 'won' : r.status === 'lost' ? 'lost' : r.status === 'cashed' ? 'cashed' : ''}">
           <div class="rep-top"><span>${esc(r.user)} <small>(${esc(r.type)})</small></span><span>${fmt(r.points)} PTS · кф ${esc(r.odds)}</span></div>
           <div class="rep-ev">${esc(r.event)}</div>
-          <div class="rep-st">${r.status === 'pending' ? 'В ожидании' : r.status === 'won' ? 'Выиграл' : 'Проиграл'}</div>
+          <div class="rep-st">${{ pending: 'В ожидании', won: 'Выиграл', lost: 'Проиграл', cashed: 'Выкуплена', void: 'Возврат' }[r.status] || esc(r.status)}</div>
         </div>`).join('');
     } catch (e) { box.innerHTML = `<div class="empty">Ошибка: ${esc(e.message)}</div>`; }
   }
@@ -467,11 +527,11 @@
   }
   bindForm('admin-points-form', async (f) => {
     const r = await post('/api/admin/give-points', { target: $('admin-target').value, amount: Number($('admin-points-amount').value), action: $('admin-points-action').value });
-    ok(r.message); f.reset();
+    ok(r.message); f.reset(); await loadMe();
   });
   bindForm('admin-dropdown-points', async () => {
     const r = await post('/api/admin/give-points', { target: $('drop-user-id').value, amount: Number($('drop-points-amount').value), action: $('drop-points-action').value });
-    ok(r.message); await loadAdminUsers();
+    ok(r.message); await loadAdminUsers(); await loadMe();
   });
   bindForm('admin-broadcast-form', async (f) => {
     const text = $('broadcast-text').value.trim();
@@ -488,9 +548,45 @@
     });
     ok('Матч добавлен! Уведомления уйдут через 60 секунд.'); f.reset(); await refreshAdminEvents();
   });
+  async function loadPromos() {
+    const box = $('promo-list');
+    if (!box) return;
+    try {
+      const list = await api('/api/admin/promos');
+      state.promos = list;
+      box.innerHTML = list.length ? list.map((p, i) => `
+        <div class="promo-row">
+          <div class="promo-info"><div class="promo-code">${esc(p.code)}</div><div class="promo-meta">+${fmt(p.reward)} PTS · активаций: ${fmt(p.uses)}</div></div>
+          <button type="button" class="btn btn-warn btn-sm" data-action="promo-edit" data-idx="${i}" aria-label="Изменить">✏️</button>
+          <button type="button" class="btn btn-danger btn-sm" data-action="promo-delete" data-idx="${i}" aria-label="Удалить">🗑</button>
+        </div>`).join('') : '<div class="empty">Промокодов пока нет</div>';
+    } catch (e) { box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  async function editPromo(p) {
+    const v = await dialog({
+      title: 'Изменить промокод', text: `Сейчас: ${p.code} · +${fmt(p.reward)} PTS`, okText: 'Сохранить',
+      fields: [
+        { name: 'code', label: 'Код', value: p.code },
+        { name: 'reward', label: 'Награда (PTS)', value: p.reward, type: 'number' },
+      ],
+    });
+    if (!v) return;
+    try {
+      const r = await post('/api/admin/update-promo', { code: p.code, new_code: v.code, reward: Number(v.reward) });
+      ok(r.message || 'Сохранено'); await loadPromos();
+    } catch (e) { fail(e); }
+  }
+  async function deletePromo(p) {
+    const v = await dialog({ title: 'Удалить промокод?', text: `${p.code} (+${fmt(p.reward)} PTS, активаций: ${fmt(p.uses)}) будет удалён безвозвратно.`, okText: 'Удалить', danger: true });
+    if (!v) return;
+    try {
+      const r = await post('/api/admin/delete-promo', { code: p.code });
+      ok(r.message || 'Удалено'); await loadPromos();
+    } catch (e) { fail(e); }
+  }
   bindForm('admin-promo-form', async (f) => {
     await post('/api/admin/create-promo', { code: $('admin-promo-code').value, reward: Number($('admin-promo-reward').value) });
-    ok('Промокод создан!'); f.reset();
+    ok('Промокод создан!'); f.reset(); await loadPromos();
   });
 
   // ---------- Навигация ----------
@@ -506,7 +602,7 @@
       if (name === 'rating') await loadRating();
       if (name === 'news') await loadNews();
       if (window.MSP && MSP.tabs[name]) await MSP.tabs[name]();
-      if (name === 'admin') { await Promise.all([loadAdminUsers(), loadEvents(true)]); loadSettle(); loadBetsReport(); }
+      if (name === 'admin') { await Promise.all([loadAdminUsers(), loadEvents(true)]); loadSettle(); loadBetsReport(); loadPromos(); }
     } catch (e) { fail(e); }
   }
 
@@ -539,6 +635,9 @@
     'cart-remove'(el) { state.cart = state.cart.filter((i) => i.eventId !== Number(el.dataset.id)); renderCart(); renderEvents(); },
     'bet-open'(el) { const h = (state.history || [])[Number(el.dataset.idx)]; if (h) openBetCard(h); },
     'bet-close'() { hide('bet-modal'); },
+    'bet-cashout': cashoutBet,
+    'promo-edit'(el) { const p = (state.promos || [])[Number(el.dataset.idx)]; if (p) editPromo(p); },
+    'promo-delete'(el) { const p = (state.promos || [])[Number(el.dataset.idx)]; if (p) deletePromo(p); },
     'bet-backdrop'(el, e) { if (e.target === el) hide('bet-modal'); },
     share: shareBet,
     'news-open'(el) { const n = (state.news || [])[Number(el.dataset.idx)]; if (n) openLink(n.link); },

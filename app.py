@@ -503,31 +503,29 @@ def express_bet(request: Request):
 
 @app.get("/api/history")
 def get_history(request: Request):
-    user = current_user(request)
-    uid = ensure_user(user)
-    conn = get_db()
-    
-    cur = conn.execute("""
-        SELECT p.choice, p.points, p.locked_odds, p.status, p.created_at, e.title, e.sport, e.result
-        FROM predictions p JOIN events e ON p.event_id = e.id
-        WHERE p.user_id = ? ORDER BY p.id DESC LIMIT 50
-    """, (uid,))
-    rows = [dict(zip([c[0] for c in cur.description], r)) for r in cur.fetchall()]
-    
-    cur = conn.execute("SELECT id, amount, total_odds, status, created_at FROM bets WHERE user_id = ?", (uid,))
-    bets = cur.fetchall()
-    for b in bets:
-        cur2 = conn.execute("""SELECT e.title, be.choice, be.locked_odds FROM bet_events be 
-            JOIN events e ON be.event_id = e.id WHERE be.bet_id = ?""", (b[0],))
-        ev_list = cur2.fetchall()
-        titles = ", ".join([f"{ev[0]} ({ev[1]})" for ev in ev_list])
-        rows.append({
-            "choice": "Экспресс", "points": b[1], "locked_odds": b[2], "status": b[3],
-            "created_at": b[4], "title": titles, "sport": "Экспресс", "result": None
-        })
-    conn.close()
-    rows.sort(key=lambda x: x["created_at"], reverse=True)
-    return rows[:50]
+    uid = ensure_user(current_user(request))
+    with extras.core.db() as conn:
+        return extras.betting.history_for(conn, uid)
+
+# --- ВЫКУП СТАВКИ ---
+@app.get("/api/cashout/offer")
+def cashout_offer(kind: str, id: int, request: Request):
+    uid = ensure_user(current_user(request))
+    with extras.core.db() as conn:
+        return {"offer": extras.betting.get_offer(conn, uid, kind, id)}
+
+@app.post("/api/cashout")
+def cashout_bet(request: Request):
+    uid = ensure_user(current_user(request))
+    body = req_json(request)
+    try:
+        bet_id = int(body["id"]); expected = body.get("expected")
+        expected = int(expected) if expected is not None else None
+    except Exception:
+        raise HTTPException(400, "Неверные данные")
+    with extras.core.user_lock(uid), extras.core.db() as conn:
+        res = extras.betting.cashout(conn, uid, str(body.get("kind", "single")), bet_id, expected)
+    return {"ok": True, "amount": res["amount"], "balance": res["balance"], "message": f"Ставка выкуплена: +{res['amount']} PTS"}
 
 @app.get("/api/bet/{bet_id}")
 def get_bet_detail(bet_id: int, request: Request):
@@ -553,22 +551,34 @@ def get_bet_detail(bet_id: int, request: Request):
 @app.post("/api/admin/give-points")
 def give_points(request: Request):
     user = current_user(request)
-    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    admin_id = ensure_user(user)
+    if admin_id not in ADMIN_IDS: raise HTTPException(403, "Только для админа")
     body = req_json(request)
     target = str(body.get("target", "")).strip()
-    amount = int(body.get("amount", 0)); action = str(body.get("action", "add"))
-    
-    conn = get_db()
-    if target.startswith("@"): cur = conn.execute("SELECT user_id FROM users WHERE username=?", (target[1:],))
-    else: cur = conn.execute("SELECT user_id FROM users WHERE user_id=?", (int(target),))
-    u_row = cur.fetchone()
-    if not u_row: raise HTTPException(404, "Игрок не найден")
-    
-    final_amount = amount if action == "add" else -amount
-    extras.core.adjust(conn, u_row[0], final_amount, "admin", "Админ: начисление" if final_amount > 0 else "Админ: списание", ref=str(uid))
-    conn.commit()
-    conn.close()
-    return {"ok": True, "message": f"Успешно! {action} {amount} баллов"}
+    action = str(body.get("action", "add"))
+    try:
+        amount = int(float(body.get("amount", 0)))
+    except Exception:
+        raise HTTPException(400, "Неверная сумма")
+    if amount < 1: raise HTTPException(400, "Сумма должна быть больше нуля")
+    if action not in ("add", "remove"): raise HTTPException(400, "Неверное действие")
+    if not target: raise HTTPException(400, "Укажите ID или @username")
+
+    with extras.core.db() as conn:
+        if target.startswith("@") or not target.lstrip("-").isdigit():
+            row = conn.execute("SELECT user_id, balance FROM users WHERE LOWER(username)=LOWER(?)", (target.lstrip("@"),)).fetchone()
+        else:
+            row = conn.execute("SELECT user_id, balance FROM users WHERE user_id=?", (int(target),)).fetchone()
+        if not row: raise HTTPException(404, "Игрок не найден")
+        uid, balance = row[0], int(row[1])
+        if action == "add":
+            delta = amount
+        else:
+            delta = -min(amount, balance)  # нельзя уйти в минус: списываем максимум, что есть
+            if delta == 0: raise HTTPException(400, "У игрока нет баллов для списания")
+        new_balance = extras.core.adjust(conn, uid, delta, "admin", "Админ: начисление" if delta > 0 else "Админ: списание", ref=str(admin_id))
+    verb = "Начислено" if delta > 0 else "Списано"
+    return {"ok": True, "balance": new_balance, "message": f"{verb} {abs(delta)} баллов. Баланс игрока: {new_balance}"}
 
 @app.post("/api/admin/update-odds/{event_id}")
 def admin_update_odds(event_id: int, request: Request):
@@ -728,20 +738,72 @@ def admin_bets_report(request: Request):
     report.sort(key=lambda x: x["time"] or "", reverse=True)
     return report[:50]
 
+def _promo_code(v):
+    code = str(v or "").strip().upper()
+    if not code or len(code) > 40 or any(ch.isspace() for ch in code):
+        raise HTTPException(400, "Код: 1–40 символов без пробелов")
+    return code
+
+def _promo_reward(v):
+    try:
+        r = int(float(v))
+    except Exception:
+        raise HTTPException(400, "Неверная награда")
+    if r < 1: raise HTTPException(400, "Награда должна быть больше нуля")
+    return r
+
+def _need_admin(request: Request):
+    if ensure_user(current_user(request)) not in ADMIN_IDS: raise HTTPException(403, "Только для админа")
+
+@app.get("/api/admin/promos")
+def list_promos(request: Request):
+    _need_admin(request)
+    with extras.core.db() as conn:
+        rows = conn.execute("""SELECT c.code, c.reward, (SELECT COUNT(*) FROM promo_uses u WHERE u.code = c.code)
+            FROM promo_codes c ORDER BY c.rowid DESC""").fetchall()
+    return [{"code": r[0], "reward": r[1], "uses": r[2]} for r in rows]
+
 @app.post("/api/admin/create-promo")
 def create_promo(request: Request):
-    user = current_user(request)
-    if ensure_user(user) not in ADMIN_IDS: raise HTTPException(403)
+    _need_admin(request)
     body = req_json(request)
-    conn = get_db()
-    try:
-        conn.execute("INSERT INTO promo_codes (code, reward) VALUES (?, ?)", (body["code"].upper(), int(body["reward"])))
-        conn.commit()
-    except Exception:
-        raise HTTPException(400, "Такой промокод уже есть")
-    finally:
-        conn.close()
+    code, reward = _promo_code(body.get("code")), _promo_reward(body.get("reward"))
+    with extras.core.db() as conn:
+        if conn.execute("SELECT 1 FROM promo_codes WHERE code=?", (code,)).fetchone():
+            raise HTTPException(400, "Такой промокод уже есть")
+        conn.execute("INSERT INTO promo_codes (code, reward) VALUES (?, ?)", (code, reward))
     return {"ok": True, "message": "Промокод создан!"}
+
+@app.post("/api/admin/update-promo")
+def update_promo(request: Request):
+    """Изменить награду и/или название промокода. Уже активировавшие игроки остаются в списке."""
+    _need_admin(request)
+    body = req_json(request)
+    old = _promo_code(body.get("code"))
+    new = _promo_code(body.get("new_code") or old)
+    reward = _promo_reward(body.get("reward"))
+    with extras.core.db() as conn:
+        if not conn.execute("SELECT 1 FROM promo_codes WHERE code=?", (old,)).fetchone():
+            raise HTTPException(404, "Промокод не найден")
+        if new != old:
+            if conn.execute("SELECT 1 FROM promo_codes WHERE code=?", (new,)).fetchone():
+                raise HTTPException(400, "Промокод с таким названием уже есть")
+            conn.execute("UPDATE promo_codes SET code=?, reward=? WHERE code=?", (new, reward, old))
+            conn.execute("UPDATE promo_uses SET code=? WHERE code=?", (new, old))
+        else:
+            conn.execute("UPDATE promo_codes SET reward=? WHERE code=?", (reward, old))
+    return {"ok": True, "message": "Промокод обновлён!"}
+
+@app.post("/api/admin/delete-promo")
+def delete_promo(request: Request):
+    _need_admin(request)
+    code = _promo_code(req_json(request).get("code"))
+    with extras.core.db() as conn:
+        if not conn.execute("SELECT 1 FROM promo_codes WHERE code=?", (code,)).fetchone():
+            raise HTTPException(404, "Промокод не найден")
+        conn.execute("DELETE FROM promo_codes WHERE code=?", (code,))
+        conn.execute("DELETE FROM promo_uses WHERE code=?", (code,))
+    return {"ok": True, "message": "Промокод удалён"}
 
 @app.post("/api/admin/broadcast")
 async def admin_broadcast(request: Request):
@@ -775,16 +837,13 @@ def activate_promo(request: Request):
     user = current_user(request)
     uid = ensure_user(user)
     code = str(req_json(request).get("code", "")).strip().upper()
-    conn = get_db()
-    cur = conn.execute("SELECT reward FROM promo_codes WHERE code=?", (code,))
-    promo = cur.fetchone()
-    if not promo: raise HTTPException(404, "Нет такого кода")
-    cur = conn.execute("SELECT 1 FROM promo_uses WHERE user_id=? AND code=?", (uid, code))
-    if cur.fetchone(): raise HTTPException(400, "Уже активирован")
-    conn.execute("INSERT INTO promo_uses (user_id, code) VALUES (?,?)", (uid, code))
-    extras.core.adjust(conn, uid, promo[0], "promo", f"Промокод {code}", ref=code)
-    conn.commit()
-    conn.close()
+    with extras.core.user_lock(uid), extras.core.db() as conn:
+        promo = conn.execute("SELECT reward FROM promo_codes WHERE code=?", (code,)).fetchone()
+        if not promo: raise HTTPException(404, "Нет такого кода")
+        if conn.execute("SELECT 1 FROM promo_uses WHERE user_id=? AND code=?", (uid, code)).fetchone():
+            raise HTTPException(400, "Уже активирован")
+        conn.execute("INSERT INTO promo_uses (user_id, code) VALUES (?,?)", (uid, code))
+        extras.core.adjust(conn, uid, promo[0], "promo", f"Промокод {code}", ref=code)
     return {"ok": True, "message": f"+{promo[0]} баллов!"}
 
 # --- НОВОСТИ DOTA 2 ---

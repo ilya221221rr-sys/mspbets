@@ -172,3 +172,180 @@ def odds_changed(conn, event_id, new):
         elif cur < last:
             conn.execute("UPDATE odds_watch SET last_odds=? WHERE user_id=? AND event_id=? AND choice=?", (cur, uid, event_id, choice))
     return notes
+
+
+# ==========================================================================
+#  ВЫКУП СТАВКИ (cash-out) и подробности ставки для карточки
+# ==========================================================================
+CASHOUT_MARGIN = 0.07  # «комиссия» выкупа: предложение = справедливая цена × (1 − 7%)
+
+
+def _win_prob(choice, o1, ox, o2):
+    """Вероятность исхода по ТЕКУЩИМ кэфам (с вычетом маржи БК: 1/кф нормируется на сумму)."""
+    inv = {k: 1.0 / float(v) for k, v in (("1", o1), ("X", ox), ("2", o2)) if v}
+    c = inv.get(str(choice))
+    if not c:
+        return None
+    return min(0.97, c / sum(inv.values()))
+
+
+def leg_status(ev_status, ev_result, choice):
+    """won / lost / void / pending для одной ноги (ординар = одна нога)."""
+    if ev_status == "settled":
+        if ev_result == "void":
+            return "void"
+        return "won" if str(choice) == str(ev_result) else "lost"
+    return "pending"
+
+
+def single_offer(points, locked, choice, ev_status, starts_at, o1, ox, o2):
+    """Сумма выкупа ординара или None, если выкуп сейчас недоступен."""
+    if ev_status != "open" or _started(starts_at):
+        return None
+    p = _win_prob(choice, o1, ox, o2)
+    if not p:
+        return None
+    offer = int(int(points) * float(locked) * p * (1 - CASHOUT_MARGIN))
+    return offer if offer >= 1 else None
+
+
+def express_offer(amount, legs):
+    """Сумма выкупа экспресса. legs: [{choice, odds, ev_status, ev_result, starts_at, o1, ox, o2}].
+    Уже сыгравшие ноги дают свой кф целиком, неразыгранные — вероятность по текущим кэфам."""
+    mult, prob, pending = 1.0, 1.0, 0
+    for l in legs:
+        st = leg_status(l["ev_status"], l["ev_result"], l["choice"])
+        if st == "lost":
+            return None
+        if st == "void":
+            continue
+        mult *= float(l["odds"])
+        if st == "pending":
+            if l["ev_status"] != "open" or _started(l["starts_at"]):
+                return None
+            p = _win_prob(l["choice"], l["o1"], l["ox"], l["o2"])
+            if not p:
+                return None
+            prob *= p
+            pending += 1
+    if not pending:
+        return None
+    offer = int(int(amount) * mult * prob * (1 - CASHOUT_MARGIN))
+    return offer if offer >= 1 else None
+
+
+_LEG_SQL = (
+    "e.title, e.sport, e.status, e.result, e.starts_at, e.odds_1, e.odds_x, e.odds_2"
+)
+
+
+def _leg_dict(choice, odds, row):
+    title, sport, ev_status, ev_result, starts_at, o1, ox, o2 = row
+    return {
+        "title": title, "sport": sport, "choice": choice, "odds": odds,
+        "ev_status": ev_status, "ev_result": ev_result, "starts_at": starts_at,
+        "o1": o1, "ox": ox, "o2": o2, "status": leg_status(ev_status, ev_result, choice),
+    }
+
+
+def public_leg(l):
+    return {"title": l["title"], "sport": l["sport"], "choice": l["choice"], "odds": l["odds"],
+            "result": l["ev_result"], "status": l["status"]}
+
+
+def history_for(conn, uid, limit=50):
+    """История ставок игрока (ординары + экспрессы) с исходами по каждому событию и ценой выкупа."""
+    items = []
+    for r in all_(
+        conn,
+        f"SELECT p.id, p.choice, p.points, p.locked_odds, p.status, p.created_at, p.cashout, {_LEG_SQL} "
+        "FROM predictions p JOIN events e ON p.event_id = e.id WHERE p.user_id = ? ORDER BY p.id DESC LIMIT ?",
+        (uid, limit),
+    ):
+        pid, choice, points, odds, status, created, cashout = r[:7]
+        leg = _leg_dict(choice, odds, r[7:])
+        offer = single_offer(points, odds, choice, leg["ev_status"], leg["starts_at"], leg["o1"], leg["ox"], leg["o2"]) if status == "pending" else None
+        items.append({
+            "id": pid, "kind": "single", "choice": choice, "points": points, "locked_odds": odds,
+            "status": status, "created_at": created, "title": leg["title"], "sport": leg["sport"],
+            "result": leg["ev_result"], "legs": [public_leg(leg)], "cashout": cashout, "cashout_offer": offer,
+        })
+    bets = all_(
+        conn, "SELECT id, amount, total_odds, status, created_at, cashout FROM bets WHERE user_id = ? ORDER BY id DESC LIMIT ?", (uid, limit)
+    )
+    legs_by_bet = {}
+    if bets:
+        marks = ",".join("?" * len(bets))
+        for r in all_(
+            conn,
+            f"SELECT be.bet_id, be.choice, be.locked_odds, {_LEG_SQL} FROM bet_events be JOIN events e ON be.event_id = e.id "
+            f"WHERE be.bet_id IN ({marks}) ORDER BY be.id",
+            tuple(b[0] for b in bets),
+        ):
+            legs_by_bet.setdefault(r[0], []).append(_leg_dict(r[1], r[2], r[3:]))
+    for bid, amount, total, status, created, cashout in bets:
+        legs = legs_by_bet.get(bid, [])
+        offer = express_offer(amount, legs) if status == "pending" else None
+        items.append({
+            "id": bid, "kind": "express", "choice": "Экспресс", "points": amount, "locked_odds": total,
+            "status": status, "created_at": created, "title": ", ".join(l["title"] for l in legs),
+            "sport": "Экспресс", "result": None, "legs": [public_leg(l) for l in legs],
+            "cashout": cashout, "cashout_offer": offer,
+        })
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    return items[:limit]
+
+
+def _load_bet(conn, uid, kind, bet_id):
+    """Возвращает (статус, ставка, предложение выкупа, название). Бросает 404, если ставка не найдена."""
+    bet_id = int(bet_id)
+    if kind == "express":
+        b = one(conn, "SELECT amount, status FROM bets WHERE id=? AND user_id=?", (bet_id, uid))
+        if not b:
+            raise HTTPException(404, "Ставка не найдена")
+        legs = [
+            _leg_dict(r[0], r[1], r[2:])
+            for r in all_(
+                conn,
+                f"SELECT be.choice, be.locked_odds, {_LEG_SQL} FROM bet_events be JOIN events e ON be.event_id = e.id WHERE be.bet_id=?",
+                (bet_id,),
+            )
+        ]
+        return b[1], b[0], express_offer(b[0], legs), f"Экспресс из {len(legs)} событий"
+    r = one(
+        conn,
+        f"SELECT p.points, p.status, p.locked_odds, p.choice, {_LEG_SQL} FROM predictions p JOIN events e ON p.event_id=e.id "
+        "WHERE p.id=? AND p.user_id=?",
+        (bet_id, uid),
+    )
+    if not r:
+        raise HTTPException(404, "Ставка не найдена")
+    leg = _leg_dict(r[3], r[2], r[4:])
+    offer = single_offer(r[0], r[2], r[3], leg["ev_status"], leg["starts_at"], leg["o1"], leg["ox"], leg["o2"])
+    return r[1], r[0], offer, leg["title"]
+
+
+def get_offer(conn, uid, kind, bet_id):
+    status, _, offer, _ = _load_bet(conn, uid, kind, bet_id)
+    return offer if status == "pending" else None
+
+
+def cashout(conn, uid, kind, bet_id, expected=None):
+    """Выкупить ставку: ставка закрывается, игрок получает текущее предложение.
+    expected — сумма, которую игрок видел на экране; если цена упала — вернём 409 с новой ценой."""
+    kind = "express" if kind == "express" else "single"
+    status, _, offer, title = _load_bet(conn, uid, kind, bet_id)
+    if status != "pending":
+        raise HTTPException(400, "Ставка уже рассчитана или выкуплена")
+    if not offer:
+        raise HTTPException(400, "Выкуп сейчас недоступен (матч начался или закрыт)")
+    if expected is not None and offer < int(expected):
+        raise HTTPException(409, f"Цена выкупа изменилась: теперь {money(offer)} PTS. Откройте ставку заново.")
+    table = "bets" if kind == "express" else "predictions"
+    cur = conn.execute(
+        f"UPDATE {table} SET status='cashed', cashout=? WHERE id=? AND user_id=? AND status='pending'", (offer, int(bet_id), uid)
+    )
+    if core.changed(cur, conn) != 1:
+        raise HTTPException(400, "Ставка уже рассчитана или выкуплена")
+    bal = adjust(conn, uid, offer, "cashout", f"Выкуп ставки: {title}", ref=f"{table}:{bet_id}")
+    return {"amount": offer, "balance": bal}

@@ -196,6 +196,10 @@
             <input id="admin-promo-reward" class="input" type="number" min="1" placeholder="Награда в баллах" required>
             <button class="btn btn-primary" type="submit">Создать промокод</button>
           </form>
+          <div class="acc-body" style="padding-top:0">
+            <div class="label">Мои промокоды</div>
+            <div id="promo-list" class="promo-list"><div class="empty">Загрузка...</div></div>
+          </div>
         </details>
       </section>
 
@@ -275,11 +279,13 @@
             <div><small>Исход</small><b id="bet-card-choice">П1</b></div>
             <div><small>Ставка</small><b id="bet-card-points" class="gold">0 PTS</b></div>
             <div><small>Коэффициент</small><b id="bet-card-odds">0.00</b></div>
-            <div><small>Выигрыш</small><b id="bet-card-win">0 PTS</b></div>
+            <div><small id="bet-card-win-label">Выигрыш</small><b id="bet-card-win">0 PTS</b></div>
           </div>
+          <div class="bet-legs" id="bet-card-legs"></div>
         </div>
         <div class="bet-foot">Только виртуальные баллы. Без денежных ставок.</div>
       </div>
+      <button id="bet-cashout-btn" class="btn btn-warn btn-block hidden" type="button" data-action="bet-cashout">Выкупить ставку</button>
       <button class="btn btn-primary btn-block" type="button" data-action="share"><svg class="ico"><use href="#i-share"/></svg>Поделиться ставкой</button>
       <button class="btn btn-ghost btn-block" type="button" data-action="bet-close">Закрыть</button>
     </div>

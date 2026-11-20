@@ -190,9 +190,9 @@ with TestClient(A.app) as c:
     ref = u.get("/api/v2/referral").json(); check("друг привязан", any(f["uid"] == 200 for f in ref["friends"]))
     b_ref = u.bal(); check("до активности бонуса нет", ref["earned"] == 0)
     for _ in range(5): f1.post("/api/v2/games/coin", {"bet": 100, "side": "heads"})
-    ref = u.get("/api/v2/referral").json(); check("после 5 ставок на 500+ бонус выдан", ref["earned"] == 300 and any(f["paid"] for f in ref["friends"]), ref)
+    ref = u.get("/api/v2/referral").json(); check("после 5 ставок на 500+ бонус выдан", ref["earned"] == 10000 and any(f["paid"] for f in ref["friends"]), ref)
     for _ in range(3): f1.post("/api/v2/games/coin", {"bet": 100, "side": "heads"})
-    check("бонус не повторяется", u.get("/api/v2/referral").json()["earned"] == 300)
+    check("бонус не повторяется", u.get("/api/v2/referral").json()["earned"] == 10000)
     self_ref = U(c, 300, "Сам", sp="ref_300"); self_ref.get("/api/v2/me"); check("самореферал не засчитан", not u.get("/api/v2/referral").json()["friends"][0]["uid"] == 300)
     journal_ok(100, "после соц."); journal_ok(200, "друг")
 
@@ -297,5 +297,75 @@ with TestClient(A.app) as c:
     adm.post("/api/admin/create-event", {"sport": "Футбол", "title": "W-adm — Y", "o1": 2, "ox": 3, "o2": 2})
     check("новый ручной матч виден сразу (кэш сброшен)", "W-adm" in {e["title"].split(" — ")[0] for e in u.get("/api/events").json()})
     check("gzip для списка матчей", "gzip" in c.get("/web/app.js", headers={"Accept-Encoding": "gzip"}).headers.get("content-encoding", ""))
+
+    print("\n== админка: баллы игрокам")
+    v = U(c, 777, "Вика"); v.get("/api/v2/me")
+    r = adm.post("/api/admin/give-points", {"target": "777", "amount": 500, "action": "add"}); check("начисление по ID", r.status_code == 200 and v.bal() == 1500, r.text)
+    r = adm.post("/api/admin/give-points", {"target": "@u777", "amount": 200, "action": "remove"}); check("списание по @username", r.status_code == 200 and v.bal() == 1300, r.text)
+    r = adm.post("/api/admin/give-points", {"target": "@U777", "amount": 99999, "action": "remove"}); check("списание больше баланса — списывается всё, не в минус", r.status_code == 200 and v.bal() == 0, r.text)
+    check("у игрока 0 — списать нечего (400)", adm.post("/api/admin/give-points", {"target": "777", "amount": 5, "action": "remove"}).status_code == 400)
+    check("неизвестный игрок 404", adm.post("/api/admin/give-points", {"target": "99999999", "amount": 5, "action": "add"}).status_code == 404)
+    check("мусор в ID — не 500", adm.post("/api/admin/give-points", {"target": "abc!", "amount": 5, "action": "add"}).status_code == 404)
+    check("сумма 0 отклонена", adm.post("/api/admin/give-points", {"target": "777", "amount": 0, "action": "add"}).status_code == 400)
+    check("не-админ получает 403", v.post("/api/admin/give-points", {"target": "777", "amount": 5, "action": "add"}).status_code == 403)
+    journal_ok(777, "после админ-операций")
+
+    print("\n== админка: промокоды (создание, правка, удаление)")
+    check("создание промокода", adm.post("/api/admin/create-promo", {"code": " test1 ", "reward": 100}).status_code == 200)
+    check("дубль отклонён", adm.post("/api/admin/create-promo", {"code": "TEST1", "reward": 5}).status_code == 400)
+    lst = adm.get("/api/admin/promos").json(); check("список промокодов", any(p_["code"] == "TEST1" and p_["reward"] == 100 and p_["uses"] == 0 for p_ in lst), lst)
+    check("игрок не видит список", v.get("/api/admin/promos").status_code == 403)
+    check("игрок активирует", v.post("/api/promo/activate", {"code": "test1"}).status_code == 200 and v.bal() == 100)
+    check("правка награды", adm.post("/api/admin/update-promo", {"code": "TEST1", "reward": 250}).status_code == 200)
+    check("переименование", adm.post("/api/admin/update-promo", {"code": "TEST1", "new_code": "test2", "reward": 250}).status_code == 200)
+    lst = adm.get("/api/admin/promos").json(); check("после правки: TEST2, 250, 1 активация", any(p_["code"] == "TEST2" and p_["reward"] == 250 and p_["uses"] == 1 for p_ in lst) and not any(p_["code"] == "TEST1" for p_ in lst), lst)
+    check("повторная активация нельзя (история сохранена)", v.post("/api/promo/activate", {"code": "TEST2"}).status_code == 400)
+    adm.post("/api/admin/create-promo", {"code": "OTHER", "reward": 1})
+    check("переименование в занятое имя — 400", adm.post("/api/admin/update-promo", {"code": "TEST2", "new_code": "OTHER", "reward": 1}).status_code == 400)
+    check("правка несуществующего — 404", adm.post("/api/admin/update-promo", {"code": "NOPE", "reward": 1}).status_code == 404)
+    check("удаление промокода", adm.post("/api/admin/delete-promo", {"code": "TEST2"}).status_code == 200)
+    check("удалённый не активируется", v.post("/api/promo/activate", {"code": "TEST2"}).status_code == 404)
+    check("нет в списке после удаления", not any(p_["code"] == "TEST2" for p_ in adm.get("/api/admin/promos").json()))
+    journal_ok(777, "после промокодов")
+
+    print("\n== выкуп ставки и разбор исходов")
+    for t_ in ("К-А — К-Б", "К-В — К-Г", "К-Д — К-Е"):
+        adm.post("/api/admin/create-event", {"sport": "Футбол", "title": t_, "o1": 2.0, "ox": 3.0, "o2": 2.5})
+    _m = {e["title"]: e["id"] for e in u.get("/api/events").json()}; kid = [_m["К-А — К-Б"], _m["К-В — К-Г"], _m["К-Д — К-Е"]]
+    check("3 матча для выкупа", len(kid) == 3)
+    b0 = u.bal(); u.post("/api/predict", {"event_id": kid[0], "points": 200, "choice": "1"})
+    h = [x for x in u.get("/api/history").json() if x["kind"] == "single" and x["title"] == "К-А — К-Б"][0]
+    check("история: id, kind, legs, статус ожидания", h["status"] == "pending" and len(h["legs"]) == 1 and h["legs"][0]["status"] == "pending", h)
+    off = h["cashout_offer"]; check(f"предложение выкупа есть и меньше потенциального выигрыша ({off})", off and 0 < off < 400, h)
+    check("чужую ставку выкупить нельзя (404)", v.post("/api/cashout", {"kind": "single", "id": h["id"]}).status_code == 404)
+    check("слишком высокая ожидаемая цена — 409", u.post("/api/cashout", {"kind": "single", "id": h["id"], "expected": off + 50}).status_code == 409)
+    b1 = u.bal(); r = u.post("/api/cashout", {"kind": "single", "id": h["id"], "expected": off}); check("выкуп ординара", r.status_code == 200 and u.bal() == b1 + off, r.text)
+    check("повторный выкуп запрещён", u.post("/api/cashout", {"kind": "single", "id": h["id"]}).status_code == 400)
+    h2 = [x for x in u.get("/api/history").json() if x["kind"] == "single" and x["id"] == h["id"]][0]
+    check("статус cashed и сумма выкупа в истории", h2["status"] == "cashed" and h2["cashout"] == off and not h2["cashout_offer"], h2)
+    bb = u.bal(); adm.post(f"/api/admin/settle/{kid[0]}", {"result": "1"}); check("расчёт не платит повторно за выкупленную ставку", u.bal() == bb)
+    check("выкуп записан в журнал", last_tx("cashout") == off, last_tx("cashout"))
+    journal_ok(100, "после выкупа ординара")
+    # экспресс: выкуп и разбор по ногам
+    u.post("/api/express", {"amount": 100, "items": [{"event_id": kid[1], "choice": "1"}, {"event_id": kid[2], "choice": "2"}]})
+    he = [x for x in u.get("/api/history").json() if x["kind"] == "express"][0]
+    check("экспресс: 2 ноги в истории, выкуп доступен", len(he["legs"]) == 2 and he["cashout_offer"] and he["cashout_offer"] < 500, he)
+    adm.post(f"/api/admin/settle/{kid[1]}", {"result": "1"})
+    he = [x for x in u.get("/api/history").json() if x["kind"] == "express"][0]
+    st = [l["status"] for l in he["legs"]]; check("после расчёта первой ноги: зашла + ожидает", sorted(st) == ["pending", "won"], st)
+    off_e = he["cashout_offer"]; check(f"выкуп экспресса растёт после сыгравшей ноги ({off_e})", off_e and off_e > 100, he)
+    b1 = u.bal(); r = u.post("/api/cashout", {"kind": "express", "id": he["id"], "expected": off_e}); check("выкуп экспресса", r.status_code == 200 and u.bal() == b1 + off_e, r.text)
+    adm.post(f"/api/admin/settle/{kid[2]}", {"result": "2"}); check("расчёт не платит за выкупленный экспресс", u.bal() == b1 + off_e)
+    journal_ok(100, "после выкупа экспресса")
+    # проигрыш: у карточки видно, что именно не зашло
+    for t_ in ("Л-А — Л-Б", "Л-В — Л-Г"):
+        adm.post("/api/admin/create-event", {"sport": "Футбол", "title": t_, "o1": 2.0, "ox": 3.0, "o2": 2.5})
+    _m = {e["title"]: e["id"] for e in u.get("/api/events").json()}; lid = [_m["Л-А — Л-Б"], _m["Л-В — Л-Г"]]
+    u.post("/api/express", {"amount": 50, "items": [{"event_id": lid[0], "choice": "1"}, {"event_id": lid[1], "choice": "1"}]})
+    adm.post(f"/api/admin/settle/{lid[0]}", {"result": "1"}); adm.post(f"/api/admin/settle/{lid[1]}", {"result": "2"})
+    hl = [x for x in u.get("/api/history").json() if x["kind"] == "express" and x["status"] == "lost"][0]
+    check("проигранный экспресс: одна нога won, другая lost, результат виден", sorted(l["status"] for l in hl["legs"]) == ["lost", "won"] and {l["result"] for l in hl["legs"]} == {"1", "2"}, hl)
+    check("выкуп проигранной/рассчитанной ставки запрещён", u.post("/api/cashout", {"kind": "express", "id": hl["id"]}).status_code == 400)
+    journal_ok(100, "итог")
 
 print(f"\nИТОГО: {OK} ok, {FAIL} fail"); sys.exit(1 if FAIL else 0)

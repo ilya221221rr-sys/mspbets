@@ -179,6 +179,8 @@ SCHEMA = [
 ALTERS = [
     "ALTER TABLE skins ADD COLUMN weight INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE cases ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE predictions ADD COLUMN cashout INTEGER",  # сумма выкупа ординара
+    "ALTER TABLE bets ADD COLUMN cashout INTEGER",  # сумма выкупа экспресса
 ]
 
 
@@ -414,7 +416,7 @@ def quest_event(conn, uid, event, n=1):
 _tour_cache = {"ts": 0, "ids": []}
 REF_MIN_BETS = 5
 REF_MIN_WAGER = 500
-REF_REWARD_REFERRER = 300
+REF_REWARD_REFERRER = 10000
 REF_REWARD_FRIEND = 150
 REF_MAX_PAID = 100
 
