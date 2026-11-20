@@ -1,5 +1,5 @@
 """
-extras — новые возможности MSPBETS (игры, кейсы, краш-раунды, нарды, социальное, автоматические матчи).
+extras — новые возможности MSPBETS (игры, кейсы, краш, социальное, автоматические матчи).
 
 Подключается из app.py тремя вызовами:
     extras.setup(get_db=..., validate=..., bot=..., admin_ids=..., webapp_url=..., bot_username=...)
@@ -11,7 +11,7 @@ extras — новые возможности MSPBETS (игры, кейсы, кр
 import asyncio
 import logging
 
-from . import betting, cases, core, crash, feed, games, nards, social  # noqa: F401
+from . import betting, cases, core, crash, feed, games, social  # noqa: F401
 
 log = logging.getLogger("mspbets.extras")
 _tasks = []
@@ -24,26 +24,41 @@ def setup(get_db, validate, bot, admin_ids, webapp_url, bot_username):
 
 
 def register(app):
-    for r in (cases.router, games.router, crash.router, nards.router, social.router, feed.router):
+    for r in (cases.router, games.router, crash.router, social.router, feed.router):
         app.include_router(r)
+
+
+def _refund_nards():
+    """Нарды удалены: незавершённые партии (ставка уже списана) — возвращаем ставку и чистим таблицу."""
+    try:
+        with core.db() as conn:
+            rows = core.all_(conn, "SELECT user_id, bet FROM nards_games")
+            for uid, bet in rows:
+                core.adjust(conn, uid, int(bet), "refund", "Возврат: нарды удалены", ref="nards")
+            conn.execute("DROP TABLE IF EXISTS nards_games")
+        if rows:
+            log.info("Нарды удалены, возвращено ставок: %s", len(rows))
+    except Exception:
+        pass  # таблицы нет — всё уже чисто
 
 
 def _init():
     core.init_schema()
     cases.seed()
+    _refund_nards()
+    crash.recover()
 
 
 async def startup():
     core.ctx.loop = asyncio.get_running_loop()
     await asyncio.to_thread(_init)
-    crash.engine.start_loop()
     _tasks.append(asyncio.create_task(social.scheduler()))
     _tasks.append(asyncio.create_task(feed.scheduler()))
-    log.info("extras запущены: игры, кейсы, краш-раунды, нарды, турниры, автозагрузка матчей")
+    log.info("extras запущены: игры, кейсы, краш, турниры, автозагрузка матчей")
 
 
 async def shutdown():
-    for t in _tasks + [crash.engine.task]:
+    for t in _tasks:
         if t:
             t.cancel()
 

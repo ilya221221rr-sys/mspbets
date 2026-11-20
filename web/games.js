@@ -1,5 +1,5 @@
 /* ==========================================================
-   MSPBETS — игры: Краш (раунды), Мины, Plinko, Dice, Колесо, Монетка, Нарды.
+   MSPBETS — игры: Краш, Мины, Plinko, Dice, Колесо, Монетка.
    Клиент только рисует: ставки, броски и результаты решает сервер.
    ========================================================== */
 (() => {
@@ -21,98 +21,97 @@
   const meId = () => state.me && state.me.user_id;
 
   // ==========================================================
-  //  КРАШ
+  //  КРАШ (обычный: раунд идёт, только когда игрок сам нажал «Играть»)
   // ==========================================================
-  panel('crash', head('Краш', 'Общий раунд для всех · забери выигрыш до крэша') + `
+  panel('crash', head('Краш', 'Нажми «Играть» и забери выигрыш до крэша') + `
     <div class="cr-hist" id="cr-hist"></div>
-    <div class="cr-stage"><canvas id="cr-canvas"></canvas><div class="cr-center"><div class="cr-mult" id="cr-mult">1.00x</div><div class="cr-status" id="cr-status">Подключаемся…</div></div></div>
+    <div class="cr-stage"><canvas id="cr-canvas"></canvas><div class="cr-center"><div class="cr-mult" id="cr-mult">1.00x</div><div class="cr-status" id="cr-status">Сделай ставку и нажми «Играть»</div></div></div>
     <div class="gcard" style="margin-top:12px">
       ${U.betBox('cr-bet', 100)}
-      <div class="row2" style="margin-top:8px"><div><label class="label" for="cr-auto">Автовывод (x)</label><input id="cr-auto" class="input" type="number" step="0.01" min="1.01" placeholder="например 2.00"></div>
-      <div style="display:flex;align-items:flex-end"><span class="online" id="cr-online"></span></div></div>
-      <button id="cr-btn" class="btn btn-primary btn-block btn-lg" style="margin-top:12px" data-action="cr-act" disabled>…</button>
+      <div style="margin-top:8px"><label class="label" for="cr-auto">Автовывод (x)</label><input id="cr-auto" class="input" type="number" step="0.01" min="1.01" placeholder="необязательно, например 2.00"></div>
+      <button id="cr-btn" class="btn btn-primary btn-block btn-lg" style="margin-top:12px" data-action="cr-act">Играть</button>
       <div class="rtp-note">RTP 96% · шанс множителя ≥ x равен 0,96 / x</div></div>
-    <div class="sub-head">Ставки в раунде <span id="cr-count" class="pill"></span></div>
-    <div class="gcard cr-feed" id="cr-feed"></div>
-    <div class="sub-head">Чат</div>
-    <div class="gcard"><div class="chat-box" id="cr-chat"></div><form class="chat-form" id="cr-chat-form"><input class="input" id="cr-chat-in" maxlength="200" placeholder="Сообщение…" autocomplete="off"><button class="btn btn-primary btn-sm" type="submit">➤</button></form></div>
     <div class="fair" id="cr-fair"></div>`);
 
-  const CR = { ws: null, st: null, off: 0, chat: [], lastChat: 0, raf: 0, poll: 0, retry: 0, active: false, myCash: null, prevPhase: '', hist: [], curve: [], last: 0, sig: {}, txt: {}, W: 0, H: 0, dpr: 1, ro: null };
-  // записываем в DOM только когда значение реально изменилось (раньше — 60 раз в секунду подряд)
+  // st: null | { phase: 'running'|'crashed'|'cashed', start, growth, bet, auto, mult, payout, crash_point, seed, seed_hash, round_id }
+  const CR = { st: null, off: 0, raf: 0, active: false, busy: false, curve: [], head: null, last: 0, txt: {}, sig: {}, W: 0, H: 0, dpr: 1, ro: null, g: null, wait: 0 };
   const setTxt = (key, el, v) => { if (CR.txt[key] !== v) { CR.txt[key] = v; el.textContent = v; } };
   const setCls = (key, el, v) => { if (CR.txt[key] !== v) { CR.txt[key] = v; el.className = v; } };
   const setHtml = (key, el, v) => { if (CR.sig[key] !== v) { CR.sig[key] = v; el.innerHTML = v; } };
   function crSize() { const c = $('cr-canvas'); if (!c) return; const r = c.getBoundingClientRect(); CR.dpr = Math.min(devicePixelRatio || 1, 2); CR.W = Math.round(r.width * CR.dpr); CR.H = Math.round(r.height * CR.dpr); if (CR.W && (c.width !== CR.W || c.height !== CR.H)) { c.width = CR.W; c.height = CR.H; } }
   const crNow = () => Date.now() / 1000 + CR.off;
-  const crMult = () => { const s = CR.st; return s && s.phase === 'running' ? Math.exp(s.growth * Math.max(0, crNow() - s.start)) : 1; };
-  const crMine = () => CR.st && CR.st.bets.find((b) => b.uid === meId());
+  const crRunning = () => !!CR.st && CR.st.phase === 'running';
+  const crMult = () => { const s = CR.st; return s && s.phase === 'running' ? Math.floor(Math.exp(s.growth * Math.max(0, crNow() - s.start)) * 100) / 100 : 1; };
 
-  function crConnect() {
-    if (!CR.active || (CR.ws && CR.ws.readyState <= 1)) return;
-    try {
-      const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/crash?init=${encodeURIComponent((M.tg && M.tg.initData) || '')}`;
-      const ws = new WebSocket(url); CR.ws = ws;
-      ws.onmessage = (e) => { const d = JSON.parse(e.data); if (d.t === 'hello') { CR.chat = d.chat || []; CR.lastChat = CR.chat.length ? CR.chat[CR.chat.length - 1].id : 0; crChat(); } else if (d.t === 'chat') crPushChat(d.msg); else if (d.t === 'state') crApply(d); };
-      ws.onopen = () => { clearInterval(CR.poll); CR.poll = 0; };
-      ws.onclose = () => { if (!CR.active) return; if (!CR.poll) CR.poll = setInterval(crPoll, 1000); clearTimeout(CR.retry); CR.retry = setTimeout(crConnect, 5000); };
-      ws.onerror = () => { try { ws.close(); } catch (_) {} };
-    } catch (_) { if (!CR.poll) CR.poll = setInterval(crPoll, 1000); }
-  }
-  async function crPoll() { try { const d = await api('/api/v2/crash/state?since=' + CR.lastChat); (d.chat || []).forEach(crPushChat); crApply(d); } catch (_) {} }
-  function crPushChat(m) { if (CR.chat.some((x) => x.id === m.id)) return; CR.chat.push(m); CR.chat = CR.chat.slice(-60); CR.lastChat = Math.max(CR.lastChat, m.id); crChat(); }
-  function crChat() { const b = $('cr-chat'); if (!b) return; const near = b.scrollTop + b.clientHeight >= b.scrollHeight - 30; b.innerHTML = CR.chat.map((m) => `<div class="chat-msg"><b>${esc(m.name)}</b>${esc(m.text)}</div>`).join('') || '<div class="muted-note" style="border:0;background:none">Напиши первым 👋</div>'; if (near) b.scrollTop = b.scrollHeight; }
-
-  function crApply(st) {
-    CR.off = st.server_time - Date.now() / 1000;
+  function crSet(st) {
+    if (st && st.server_time) CR.off = st.server_time - Date.now() / 1000;
     const prev = CR.st; CR.st = st;
-    if (st.phase !== CR.prevPhase) {
-      if (st.phase === 'betting') { CR.curve = []; CR.head = null; CR.myCash = null; }
-      if (st.phase === 'crashed') { const mine = st.bets.find((b) => b.uid === meId()); if (mine && !mine.cashed) haptic('error'); U.touchMe(); }
-      CR.prevPhase = st.phase;
+    if (st && st.phase === 'running' && (!prev || prev.round_id !== st.round_id)) {
+      CR.curve = []; CR.head = null;
+      for (let t = 0; t < crNow() - st.start - 0.2; t += 0.12) CR.curve.push({ t, m: Math.exp(st.growth * t) }); // вернулись посреди раунда — дорисовать график
+      crWait(st.round_id);
     }
-    const mine = crMine();
-    if (mine && mine.cashed && !CR.myCash) { CR.myCash = mine; if (!prev || !prev.bets.find((b) => b.uid === meId() && b.cashed)) { haptic('success'); M.loadMe().catch(() => {}); } }
-    setTxt('online', $('cr-online'), st.online ? `● ${st.online} онлайн` : '');
-    setHtml('hist', $('cr-hist'), st.history.slice().reverse().map((h) => `<span class="${h.cp >= 10 ? 'hi' : h.cp >= 2 ? 'mid' : 'lo'}">${x2(h.cp)}x</span>`).join(''));
-    setTxt('count', $('cr-count'), String(st.bets.length));
-    setHtml('feed', $('cr-feed'), st.bets.map((b) => `<div class="cr-bet ${b.uid === meId() ? 'me' : ''} ${b.cashed ? 'won' : st.phase === 'crashed' ? 'lost' : ''}"><span class="n">${esc(b.name)}</span><span class="a">${fmt(b.amount)}</span><span class="w">${b.cashed ? `x${x2(b.cashed)} +${fmt(b.payout)}` : st.phase === 'crashed' ? '✕' : '…'}</span></div>`).join('') || '<div class="muted-note" style="border:0;background:none">Ставок пока нет — будь первым</div>');
-    setHtml('fair', $('cr-fair'), st.phase === 'crashed' && st.seed ? `Раунд #${st.round_id} · seed: ${st.seed}<br>hash до раунда: ${st.seed_hash}<br>Проверка: crash = HMAC-SHA256(seed, "mspbets-crash")` : `Раунд #${st.round_id} · хеш seed (раскроется после крэша): ${st.seed_hash}`);
-    crButton();
+    if (st && st.phase !== 'running') CR.wait = 0;
+    crInfo(); crButton();
+  }
+  function crInfo() {
+    const s = CR.st;
+    setHtml('fair', $('cr-fair'), !s ? '' : s.phase !== 'running' && s.seed ? `Раунд #${s.round_id} · seed: ${s.seed}<br>hash до раунда: ${s.seed_hash}<br>Проверка: crash = HMAC-SHA256(seed, "mspbets-crash")` : `Раунд #${s.round_id} · хеш seed (раскроется после раунда): ${s.seed_hash}`);
+  }
+  async function crHist() {
+    try {
+      const rows = await api('/api/v2/crash/rounds');
+      setHtml('hist', $('cr-hist'), rows.slice().reverse().map((h) => `<span class="${h.crash_point >= 10 ? 'hi' : h.crash_point >= 2 ? 'mid' : 'lo'}">${x2(h.crash_point)}x</span>`).join(''));
+    } catch (_) {}
+  }
+  // long-poll: сервер отвечает ровно в момент краша/автовывода (точку краша клиент заранее не знает)
+  async function crWait(id) {
+    CR.wait = id;
+    while (CR.active && CR.wait === id && crRunning() && CR.st.round_id === id) {
+      try {
+        const d = await api('/api/v2/crash/wait?round=' + id);
+        if (CR.wait !== id) return;
+        if (d.phase && d.phase !== 'running') { crFinish(d); return; }
+        if (d.phase === 'idle') return;
+      } catch (_) { await sleep(1500); }
+    }
+  }
+  function crFinish(d) {
+    crSet(d); crHist(); U.touchMe();
+    if (d.phase === 'crashed') haptic('error');
+    else if (d.phase === 'cashed') { haptic('success'); ok(`Автовывод x${x2(d.mult)} · +${fmt(d.payout)} PTS`); M.loadMe().catch(() => {}); if (d.unlocked && d.unlocked.length) U.popups(d.unlocked); }
   }
   function crButton() {
-    const s = CR.st, b = $('cr-btn'); if (!s || !b) return; const mine = crMine();
-    setCls('btncls', b, 'btn btn-block btn-lg ' + (s.phase === 'running' && mine && !mine.cashed ? 'btn-warn' : 'btn-primary'));
-    let dis, label;
-    if (s.phase === 'betting') { dis = !!mine; label = mine ? `Ставка ${fmt(mine.amount)} принята ✓` : 'Поставить'; }
-    else if (s.phase === 'running') { if (mine && !mine.cashed) { dis = false; label = `Забрать ${fmt(Math.floor(mine.amount * Math.floor(crMult() * 100) / 100))} PTS`; } else { dis = true; label = mine ? `Забрано x${x2(mine.cashed)} ✓` : 'Ждите следующий раунд'; } }
-    else { dis = true; label = 'Раунд завершён'; }
-    if (b.disabled !== dis) b.disabled = dis;
+    const s = CR.st, b = $('cr-btn'); if (!b) return;
+    const run = crRunning();
+    setCls('btncls', b, 'btn btn-block btn-lg ' + (run ? 'btn-warn' : 'btn-primary'));
+    const label = run ? `Забрать ${fmt(Math.floor(s.bet * crMult()))} PTS` : s ? 'Играть снова' : 'Играть';
+    if (b.disabled !== CR.busy) b.disabled = CR.busy;
     setTxt('btn', b, label);
   }
   function crLoop(ts) {
     if (!CR.active) return; CR.raf = requestAnimationFrame(crLoop);
-    if (ts - CR.last < 32) return; CR.last = ts; // ~30 кадров/с — глазу хватает, телефон не греется
-    const s = CR.st; const mEl = $('cr-mult'), stEl = $('cr-status'); if (!s || !mEl) return;
-    const now = crNow(); let mode = 'live';
-    if (s.phase === 'betting') { setTxt('m', mEl, '1.00x'); setCls('mc', mEl, 'cr-mult'); setTxt('st', stEl, `Приём ставок: ${Math.max(0, s.bet_end - now).toFixed(1)} c`); mode = 'idle'; }
+    if (ts - CR.last < 32) return; CR.last = ts;
+    const s = CR.st; const mEl = $('cr-mult'), stEl = $('cr-status'); if (!mEl) return;
+    let mode = 'idle';
+    if (!s) { setTxt('m', mEl, '1.00x'); setCls('mc', mEl, 'cr-mult'); setTxt('st', stEl, 'Сделай ставку и нажми «Играть»'); }
     else if (s.phase === 'running') {
-      const m = crMult(); const mine = crMine();
-      setTxt('m', mEl, x2(m) + 'x'); setCls('mc', mEl, 'cr-mult' + (mine && mine.cashed ? ' won' : '')); setTxt('st', stEl, mine && mine.cashed ? `Вы забрали x${x2(mine.cashed)} · +${fmt(mine.payout)}` : mine ? 'Жми «Забрать», пока не поздно!' : 'Раунд идёт');
-      const lt = CR.curve.length ? CR.curve[CR.curve.length - 1].t : -1; const t = now - s.start;
+      const m = crMult(); const t = crNow() - s.start;
+      setTxt('m', mEl, x2(m) + 'x'); setCls('mc', mEl, 'cr-mult'); setTxt('st', stEl, s.auto ? `Автовывод на ${x2(s.auto)}x · жми «Забрать», пока не поздно!` : 'Жми «Забрать», пока не поздно!');
+      const lt = CR.curve.length ? CR.curve[CR.curve.length - 1].t : -1;
       if (t - lt >= 0.12) { CR.curve.push({ t, m }); if (CR.curve.length > 700) CR.curve = CR.curve.filter((_, i) => i % 2 === 0); }
-      CR.head = { t, m }; // «голова» линии рисуется отдельно, чтобы двигалась плавно
-      if (mine && !mine.cashed) crButton(); mode = mine && mine.cashed ? 'cashed' : 'live';
-    } else { setTxt('m', mEl, x2(s.crash_point || 1) + 'x'); setCls('mc', mEl, 'cr-mult crashed'); setTxt('st', stEl, 'Крэш!'); mode = 'crashed'; }
+      CR.head = { t, m }; crButton(); mode = 'live';
+    } else if (s.phase === 'cashed') { setTxt('m', mEl, x2(s.mult) + 'x'); setCls('mc', mEl, 'cr-mult won'); setTxt('st', stEl, `Вы забрали x${x2(s.mult)} · +${fmt(s.payout)} PTS`); mode = 'cashed'; }
+    else { setTxt('m', mEl, x2(s.crash_point || 1) + 'x'); setCls('mc', mEl, 'cr-mult crashed'); setTxt('st', stEl, `Крэш! Ставка ${fmt(s.bet)} PTS сгорела`); mode = 'crashed'; }
     crDraw(mode, s);
   }
   function crDraw(mode, s) {
     const c = $('cr-canvas'); if (!CR.W) crSize(); if (!CR.W) return; const dpr = CR.dpr, W = CR.W, H = CR.H;
     const g = CR.g || (CR.g = c.getContext('2d')); g.clearRect(0, 0, W, H);
     const pad = { l: 40 * dpr, r: 14 * dpr, t: 16 * dpr, b: 18 * dpr }; const pts = CR.curve; const last = CR.head || pts[pts.length - 1] || { t: 0, m: 1 };
-    const endM = s.phase === 'crashed' ? (s.crash_point || last.m) : last.m;
-    const tMax = Math.max(8, last.t * 1.12), mMax = Math.max(2.2, endM * 1.18); const gw = W - pad.l - pad.r, gh = H - pad.t - pad.b;
-    const lm = Math.log(mMax), X = (t) => pad.l + gw * t / tMax, Y = (m) => H - pad.b - gh * (Math.log(m) / lm);
+    const endM = mode === 'crashed' ? (s.crash_point || last.m) : last.m;
+    const tMax = Math.max(8, last.t * 1.12), mMax = Math.max(2.2, Math.max(endM, last.m) * 1.18); const gw = W - pad.l - pad.r, gh = H - pad.t - pad.b;
+    const lm = Math.log(mMax), X = (t) => pad.l + gw * t / tMax, Y = (m) => H - pad.b - gh * (Math.log(Math.max(1, m)) / lm);
     g.font = `${10 * dpr}px Manrope, sans-serif`; g.textBaseline = 'middle';
     [1.5, 2, 3, 5, 10, 25, 100].filter((v) => v < mMax).forEach((v) => { g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = dpr; g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(W - pad.r, Y(v)); g.stroke(); g.fillStyle = 'rgba(139,144,171,.85)'; g.fillText(v + 'x', 4 * dpr, Y(v)); });
     const n = pts.length + (CR.head ? 1 : 0); if (n < 2) return;
@@ -121,19 +120,36 @@
     const trace = () => { let i = 0; for (const p of pts) { i ? g.lineTo(X(p.t), Y(p.m)) : g.moveTo(X(p.t), Y(p.m)); i++; } if (CR.head) (i ? g.lineTo(X(CR.head.t), Y(CR.head.m)) : g.moveTo(X(CR.head.t), Y(CR.head.m))); };
     g.beginPath(); trace(); g.lineTo(X(last.t), H - pad.b); g.lineTo(X(0), H - pad.b); g.closePath(); g.fillStyle = grad; g.fill();
     g.beginPath(); trace(); g.strokeStyle = col; g.lineWidth = 3 * dpr; g.lineJoin = 'round'; g.stroke();
-    g.beginPath(); g.arc(X(last.t), Y(last.m), 11 * dpr, 0, 7); g.fillStyle = col + '33'; g.fill(); g.beginPath(); g.arc(X(last.t), Y(last.m), 5 * dpr, 0, 7); g.fillStyle = '#fff'; g.fill(); // свечение без shadowBlur (он очень тяжёлый)
+    g.beginPath(); g.arc(X(last.t), Y(last.m), 11 * dpr, 0, 7); g.fillStyle = col + '33'; g.fill(); g.beginPath(); g.arc(X(last.t), Y(last.m), 5 * dpr, 0, 7); g.fillStyle = '#fff'; g.fill();
   }
-  function crStop() { CR.active = false; cancelAnimationFrame(CR.raf); if (CR.ro) { CR.ro.disconnect(); CR.ro = null; } clearInterval(CR.poll); CR.poll = 0; clearTimeout(CR.retry); if (CR.ws) { try { CR.ws.close(); } catch (_) {} CR.ws = null; } }
+  function crStop() { CR.active = false; CR.wait = 0; cancelAnimationFrame(CR.raf); if (CR.ro) { CR.ro.disconnect(); CR.ro = null; } }
   leaveHooks.crash = crStop;
-  M.tabs.crash = async () => { crStop(); CR.active = true; CR.st = null; CR.prevPhase = ''; CR.head = null; CR.sig = {}; CR.txt = {}; CR.g = null; CR.W = 0; crChat(); crSize(); if (window.ResizeObserver && !CR.ro) { CR.ro = new ResizeObserver(crSize); CR.ro.observe($('cr-canvas')); } await crPoll(); crConnect(); CR.raf = requestAnimationFrame(crLoop); };
-  M.actions['cr-act'] = async () => {
-    const s = CR.st; if (!s) return;
-    try {
-      if (s.phase === 'betting') { const amount = U.bet('cr-bet'); const auto = Number($('cr-auto').value) || null; const r = await post('/api/v2/crash/bet', { amount, auto }); U.after(r); haptic('medium'); }
-      else if (s.phase === 'running') { const r = await post('/api/v2/crash/cashout'); ok(`Забрали x${x2(r.mult)} · +${fmt(r.payout)} PTS`); U.after(r); }
-    } catch (e) { fail(e); }
+  M.tabs.crash = async () => {
+    crStop(); CR.active = true; CR.st = null; CR.head = null; CR.curve = []; CR.sig = {}; CR.txt = {}; CR.g = null; CR.W = 0; CR.busy = false;
+    crSize(); if (window.ResizeObserver) { CR.ro = new ResizeObserver(crSize); CR.ro.observe($('cr-canvas')); }
+    crButton(); CR.raf = requestAnimationFrame(crLoop); crHist();
+    try { const d = await api('/api/v2/crash/state'); if (CR.active && d.phase === 'running') { crSet(d); } } catch (_) {} // вернулись в игру посреди раунда
   };
-  $('cr-chat-form').addEventListener('submit', async (e) => { e.preventDefault(); const i = $('cr-chat-in'); const t = i.value.trim(); if (!t) return; i.value = ''; try { await post('/api/v2/crash/chat', { text: t }); } catch (er) { fail(er); } });
+  M.actions['cr-act'] = async () => {
+    if (CR.busy) return; CR.busy = true; crButton();
+    try {
+      if (crRunning()) {
+        const id = CR.st.round_id;
+        try {
+          const r = await post('/api/v2/crash/cashout'); CR.wait = 0;
+          crSet({ ...r, server_time: r.server_time }); ok(`Забрали x${x2(r.mult)} · +${fmt(r.payout)} PTS`); haptic('success'); U.after(r); crHist();
+        } catch (e) {
+          // раунд мог закончиться, пока шёл запрос — узнаём итог у сервера
+          const d = await api('/api/v2/crash/state').catch(() => null);
+          if (d && d.round_id === id && d.phase !== 'running') { CR.busy = false; crFinish(d); } else throw e;
+        }
+      } else {
+        const bet = U.bet('cr-bet'); const auto = Number($('cr-auto').value) || null;
+        CR.curve = []; CR.head = null;
+        const r = await post('/api/v2/crash/start', { bet, auto }); haptic('medium'); U.after(r); crSet(r);
+      }
+    } catch (e) { fail(e); } finally { CR.busy = false; crButton(); }
+  };
 
   // ==========================================================
   //  МИНЫ
@@ -299,77 +315,4 @@
       $('cn-res').className = 'res-pop ' + (r.win ? 'win' : 'lose'); $('cn-res').textContent = r.win ? `Угадал! +${fmt(r.payout)} PTS` : `Выпало: ${r.result === 'heads' ? 'Орёл' : 'Решка'}`; haptic(r.win ? 'success' : 'error'); U.after(r);
     } catch (e) { fail(e); } finally { CN.busy = false; $('cn-go').disabled = false; }
   };
-
-  // ==========================================================
-  //  НАРДЫ
-  // ==========================================================
-  panel('nards', head('Нарды', 'Короткие нарды против бота · победа x1.9 · кубики бросает сервер') + `
-    <div class="gcard" id="nd-setup">${U.betBox('nd-bet', 100)}<button class="btn btn-primary btn-block btn-lg" style="margin-top:12px" data-action="nd-start">Начать партию</button>
-      <div class="muted-note" style="margin-top:10px">Ты играешь белыми: двигай шашки с 24-го пункта к дому (правый нижний угол) и выбрасывай все 15. Бьёшь одиночные шашки соперника, он — твои. Правила: бар, удары, дубли, обязательные ходы.</div></div>
-    <div id="nd-game" class="hidden"><div class="nards-info"><span id="nd-turn"></span><span id="nd-pips"></span></div>
-      <div class="nb" id="nd-board"></div>
-      <div class="nb-mid" id="nd-dice"></div><div class="res-pop" id="nd-res"></div>
-      <div class="btn-row"><button class="btn btn-ghost hidden" id="nd-off" data-action="nd-bearoff">Выбросить шашку ▶</button><button class="btn btn-danger" id="nd-resign" data-action="nd-resign">Сдаться</button><button class="btn btn-primary hidden" id="nd-new" data-action="nd-new">Новая партия</button></div></div>`);
-  const ND = { v: null, sel: null, busy: false, bet: 0 };
-  const BAR = 24, OFF = -1;
-  const initPos = () => { const p = Array(24).fill(0); p[23] = 2; p[12] = 5; p[7] = 3; p[5] = 5; p[0] = -2; p[11] = -5; p[16] = -3; p[18] = -5; return { pts: p, bar: [0, 0], off: [0, 0] }; };
-  function localApply(st, who, mv) {
-    const sg = who === 'p' ? 1 : -1, s = who === 'p' ? 0 : 1;
-    if (mv.frm === BAR) st.bar[s]--; else st.pts[mv.frm] -= sg;
-    if (mv.to === OFF) st.off[s]++; else { if (st.pts[mv.to] * sg === -1) { st.pts[mv.to] = 0; st.bar[1 - s]++; } st.pts[mv.to] += sg; }
-  }
-  const ck = (cls, n, can) => Array.from({ length: Math.min(n, 5) }, (_, k) => `<span class="ck ${cls} ${can && k === Math.min(n, 5) - 1 ? 'can' : ''}">${k === 4 && n > 5 ? n : ''}</span>`).join('');
-  function ndRender(v, opts = {}) {
-    const legal = opts.noLegal ? [] : (v.legal || []); const froms = new Set(legal.map((l) => l.frm)); const dests = ND.sel != null ? new Set(legal.filter((l) => l.frm === ND.sel).map((l) => l.to)) : new Set();
-    const pt = (i) => { const n = v.pts[i]; const cnt = Math.abs(n); const can = n > 0 && froms.has(i) && v.bar[0] === 0;
-      return `<div class="pt ${i % 2 ? 'odd' : 'even'} ${ND.sel === i ? 'sel' : ''} ${dests.has(i) ? 'dest' : ''}" data-action="nd-pt" data-i="${i}">${ck(n > 0 ? 'p' : 'b', cnt, can)}</div>`; };
-    const barP = v.bar[0] ? `<div data-action="nd-pt" data-i="${BAR}" style="display:contents">${ck('p', v.bar[0], froms.has(BAR))}</div>` : '';
-    $('nd-board').innerHTML = `<div class="nb-row top">${[12, 13, 14, 15, 16, 17].map(pt).join('')}<div class="nb-bar t">${ck('b', v.bar[1])}</div>${[18, 19, 20, 21, 22, 23].map(pt).join('')}</div>
-      <div class="nb-row bot">${[11, 10, 9, 8, 7, 6].map(pt).join('')}<div class="nb-bar b ${ND.sel === BAR ? 'sel' : ''}">${barP}</div>${[5, 4, 3, 2, 1, 0].map(pt).join('')}</div>`;
-    const dice = v.dice && v.dice.length ? v.dice : v.roll || []; const used = !(v.dice && v.dice.length);
-    $('nd-dice').innerHTML = dice.map((d) => `<span class="die ${used ? 'used' : ''}">${d}</span>`).join('');
-    $('nd-turn').textContent = v.winner ? 'Партия окончена' : v.turn === 'p' ? 'Ваш ход ⚪' : 'Ход бота ⚫';
-    $('nd-pips').textContent = `Выброшено: вы ${v.off[0]}/15 · бот ${v.off[1]}/15 · pip ${v.pips ? v.pips[0] : '—'} / ${v.pips ? v.pips[1] : '—'}`;
-    $('nd-off').classList.toggle('hidden', !(dests.has(OFF)));
-  }
-  async function ndPlay(events, finalView) {
-    ND.busy = true; const cur = JSON.parse(JSON.stringify(ND.v || { ...initPos(), turn: 'p', dice: [], roll: [], winner: null, legal: [], bet: ND.bet, pips: null }));
-    for (const e of events) {
-      if (e.who === 'p' && e.move) { localApply(cur, 'p', e.move); ndRender({ ...cur, dice: [], legal: [] }, { noLegal: true }); await sleep(150); }
-      else if (e.who === 'p' && e.pass) { toast(`У вас нет ходов (кубики ${e.dice.join(':')}) — пропуск`); await sleep(900); }
-      else if (e.who === 'b') {
-        $('nd-turn').textContent = 'Ход бота ⚫'; $('nd-dice').innerHTML = e.dice.map((d) => `<span class="die">${d}</span>`).join(''); await sleep(500);
-        for (const mv of e.moves) { localApply(cur, 'b', mv); ndRender({ ...cur, dice: e.dice, legal: [] }, { noLegal: true }); if (mv.hit) haptic('warning'); await sleep(480); }
-        if (e.pass) { toast('У бота нет ходов'); await sleep(500); }
-      }
-    }
-    ND.v = finalView; ND.sel = null; ND.busy = false; ndRender(finalView); ndEndCheck(finalView);
-  }
-  let ndPayout = 0;
-  function ndEndCheck(v) {
-    const done = !!v.winner; $('nd-resign').classList.toggle('hidden', done); $('nd-new').classList.toggle('hidden', !done);
-    if (done) { $('nd-res').className = 'res-pop ' + (v.winner === 'p' ? 'win' : 'lose'); $('nd-res').textContent = v.winner === 'p' ? `Победа! +${fmt(ndPayout || Math.floor(v.bet * v.win_mult))} PTS` : 'Бот выиграл партию'; haptic(v.winner === 'p' ? 'success' : 'error'); }
-  }
-  const ndShow = (game) => { $('nd-setup').classList.toggle('hidden', game); $('nd-game').classList.toggle('hidden', !game); };
-  M.tabs.nards = async () => {
-    const d = await api('/api/v2/nards/state'); $('nd-res').textContent = ''; ND.sel = null;
-    if (d.active) { ND.v = d.state; ND.bet = d.state.bet; ndShow(true); ndRender(d.state); ndEndCheck(d.state); } else { ND.v = null; ndShow(false); }
-  };
-  M.actions['nd-start'] = async () => {
-    try { const bet = U.bet('nd-bet'); const r = await post('/api/v2/nards/start', { bet }); ND.bet = bet; ND.v = null; ndPayout = 0; $('nd-res').textContent = ''; ndShow(true); U.after(r); ndRender({ ...initPos(), turn: 'p', dice: [], roll: [], winner: null, legal: [], pips: null }); await sleep(300); await ndPlay(r.events, r.state); }
-    catch (e) { fail(e); }
-  };
-  M.actions['nd-pt'] = async (el) => {
-    if (ND.busy || !ND.v || ND.v.winner || ND.v.turn !== 'p') return; const i = Number(el.dataset.i); const legal = ND.v.legal || [];
-    if (ND.sel != null && legal.some((l) => l.frm === ND.sel && l.to === i)) return ndMove(ND.sel, i);
-    if (legal.some((l) => l.frm === i)) { ND.sel = ND.sel === i ? null : i; haptic('light'); ndRender(ND.v); } else { ND.sel = null; ndRender(ND.v); }
-  };
-  M.actions['nd-bearoff'] = () => { if (ND.sel != null) ndMove(ND.sel, OFF); };
-  async function ndMove(frm, to) {
-    ND.busy = true;
-    try { const r = await post('/api/v2/nards/move', { frm, to }); ndPayout = r.payout; if (r.balance != null) U.setBal(r.balance); if (r.unlocked && r.unlocked.length) U.popups(r.unlocked); ND.busy = false; await ndPlay(r.events, r.state); if (r.winner !== undefined || r.payout) U.touchMe(); }
-    catch (e) { ND.busy = false; fail(e); ND.sel = null; ndRender(ND.v); }
-  }
-  M.actions['nd-resign'] = async () => { if (!(await dialog({ title: 'Сдаться?', text: 'Ставка сгорит.', okText: 'Сдаться', danger: true }))) return; try { const r = await post('/api/v2/nards/resign'); U.after(r); ND.v = { ...ND.v, winner: 'b', legal: [] }; ndRender(ND.v); ndEndCheck(ND.v); } catch (e) { fail(e); } };
-  M.actions['nd-new'] = () => { ND.v = null; ND.sel = null; $('nd-res').textContent = ''; ndShow(false); };
 })();

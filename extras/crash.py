@@ -1,40 +1,44 @@
 """
-extras/crash.py — Краш по раундам для всех игроков.
+extras/crash.py — обычный (одиночный) Краш.
 
-  * один общий раунд на всех: фаза ставок (8 c) → полёт → крэш → пауза;
-  * множитель считается от времени: m(t) = exp(0.10 * t); клиент рисует график сам,
-    сервер рассылает только смены фаз (WebSocket /ws/crash) — крэш приходит мгновенно;
-  * точка краша заранее определена seed'ом; хеш seed показывается ДО раунда,
-    сам seed — ПОСЛЕ (можно проверить честность). RTP = 96% (шанс m ≥ x равен 0.96/x);
-  * ставки и кэшауты других игроков в ленте, чат, автовывод;
-  * баланс — только через core.adjust (журнал). Если сервер перезапустился посреди раунда,
-    неразыгранные ставки возвращаются.
+Раунд запускается ТОЛЬКО когда игрок сам нажал «Играть»:
+  * нет общего цикла раундов, WebSocket, чата и фоновых задач — сервер ничего не делает,
+    пока никто не играет, и не нагружает Turso лишними запросами;
+  * точка краша определяется сразу при ставке (seed → HMAC), игроку показывается хеш seed,
+    сам seed раскрывается после окончания раунда (можно проверить честность);
+  * множитель растёт от времени: m(t) = exp(0.10 * t); график рисует клиент;
+  * «забрать» / автовывод проверяет сервер по своим часам; RTP = 96%;
+  * состояние активного раунда лежит в памяти (быстро), в Turso пишется только
+    ставка (1 транзакция) и итог (1 транзакция);
+  * если сервер перезапустился посреди раунда — ставка возвращается (см. recover()).
 """
 import asyncio
 import hashlib
 import hmac
-import json
 import logging
 import math
 import secrets
 import threading
 import time
-from collections import deque
+from calendar import timegm
 
-from fastapi import APIRouter, Body, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, HTTPException, Request
 
 from . import core
-from .core import all_, auth, db, display_name, now_iso, one, touch_user, user_lock
+from .core import all_, auth, db, now_iso, touch_user, user_lock
 
 log = logging.getLogger("mspbets.crash")
 router = APIRouter()
 
 GROWTH = 0.10
-BET_WINDOW = 8.0
-CRASH_PAUSE = 4.5
 EDGE = 0.04
 MAX_CRASH = 1000.0
 MAX_BET = 1_000_000
+WAIT_SECONDS = 20.0  # сколько максимум держим long-poll /wait (потом клиент переспрашивает)
+
+ACTIVE = {}  # uid -> раунд (в памяти)
+_guard = threading.Lock()
+_bg = set()
 
 
 def crash_from_seed(seed: str) -> float:
@@ -48,292 +52,256 @@ def mult_at(t: float) -> float:
     return math.exp(GROWTH * max(0.0, t))
 
 
-class Engine:
-    def __init__(self):
-        self.lock = threading.RLock()
-        self.phase = "idle"
-        self.round_id = 0
-        self.seed = ""
-        self.seed_hash = ""
-        self.cp = 1.0
-        self.bet_end = 0.0
-        self.start = 0.0
-        self.crash_ts = 0.0
-        self.bets = {}
-        self.history = deque(maxlen=20)
-        self.chat = deque(maxlen=60)
-        self.last_chat = {}
-        self.clients = set()
-        self.task = None
+def _floor2(x: float) -> float:
+    return math.floor(x * 100 + 1e-9) / 100
 
-    # -------------------------- снимок состояния --------------------------
-    def snapshot(self):
-        crashed = self.phase == "crashed"
-        return {
-            "t": "state",
-            "server_time": time.time(),
-            "phase": self.phase,
-            "round_id": self.round_id,
-            "seed_hash": self.seed_hash,
-            "bet_end": self.bet_end,
-            "start": self.start,
-            "growth": GROWTH,
-            "crash_point": self.cp if crashed else None,
-            "seed": self.seed if crashed else None,
-            "online": len(self.clients),
-            "history": list(self.history),
-            "bets": sorted(
-                (
-                    {"uid": b["uid"], "name": b["name"], "amount": b["amount"], "cashed": b["cashed"], "payout": b["payout"],
-                     "auto": b["auto"] if b["cashed"] else None}
-                    for b in list(self.bets.values())
-                ),
-                key=lambda x: -x["amount"],
-            )[:60],
-        }
 
-    async def _broadcast(self, payload=None):
-        data = json.dumps(payload or self.snapshot(), ensure_ascii=False)
-        dead = []
-        for ws in list(self.clients):
-            try:
-                await ws.send_text(data)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.clients.discard(ws)
+def _view(r, balance=None):
+    """Что видит игрок. Точка краша и seed — только когда раунд закончен."""
+    done = r["status"] != "running"
+    v = {
+        "ok": True,
+        "phase": r["status"],  # running | crashed | cashed
+        "round_id": r["id"],
+        "seed_hash": r["seed_hash"],
+        "server_time": time.time(),
+        "start": r["start"],
+        "growth": GROWTH,
+        "bet": r["amount"],
+        "auto": r["auto"],
+        "mult": r["mult"],
+        "payout": r["payout"],
+        "crash_point": r["cp"] if done else None,
+        "seed": r["seed"] if done else None,
+    }
+    if balance is not None:
+        v["balance"] = balance
+    return v
 
-    def push(self, payload=None):
-        """Разослать обновление (можно звать из любого потока)."""
-        loop = core.ctx.loop
-        if loop and self.clients:
-            try:
-                asyncio.run_coroutine_threadsafe(self._broadcast(payload), loop)
-            except Exception:
-                pass
 
-    # -------------------------- ставки --------------------------
-    def place_bet(self, user, amount, auto):
-        uid = int(user["id"])
-        amount = core.check_amount(amount, 1, MAX_BET)
-        if auto is not None:
-            try:
-                auto = round(float(auto), 2)
-            except Exception:
-                raise HTTPException(400, "Неверный автовывод")
-            if not (1.01 <= auto <= MAX_CRASH):
-                raise HTTPException(400, "Автовывод от 1.01x")
-        with user_lock(uid), self.lock:
-            if self.phase != "betting" or time.time() >= self.bet_end:
-                raise HTTPException(400, "Приём ставок закрыт — дождитесь следующего раунда")
-            if uid in self.bets:
-                raise HTTPException(400, "Ставка в этом раунде уже сделана")
-            with db() as conn:
-                touch_user(conn, user)
-                core.game_bet(conn, uid, amount, "crash", f"Ставка: Краш #{self.round_id}")
-                core.game_done(conn, uid, "crash")
-                conn.execute(
-                    "INSERT INTO crash_bets (round_id, user_id, amount, auto_cashout, created_at) VALUES (?,?,?,?,?)",
-                    (self.round_id, uid, amount, auto, now_iso()),
-                )
-                bal = core.balance_of(conn, uid)
-            self.bets[uid] = {"uid": uid, "name": display_name(user), "amount": amount, "auto": auto, "cashed": None, "payout": 0}
-        self.push()
-        return {"ok": True, "balance": bal, "round_id": self.round_id, "unlocked": core.pop_unlocked()}
+def _event_ts(r):
+    """Когда у раунда наступит событие: автовывод (если он раньше краша) или краш."""
+    if r["auto"] and r["auto"] <= r["cp"]:
+        return r["start"] + math.log(r["auto"]) / GROWTH, True
+    return r["start"] + math.log(r["cp"]) / GROWTH, False
 
-    def cash(self, uid, forced=None):
-        with self.lock:
-            if self.phase != "running":
-                raise HTTPException(400, "Сейчас нельзя забрать выигрыш")
-            b = self.bets.get(uid)
-            if not b or b["cashed"]:
-                raise HTTPException(400, "Нет активной ставки")
-            now = time.time()
-            if forced is None and now >= self.crash_ts:
-                raise HTTPException(400, "Раунд уже завершён")
-            m = forced if forced is not None else math.floor(mult_at(now - self.start) * 100) / 100
-            m = max(1.0, min(m, self.cp))
-            payout = core.pay(b["amount"], m)
-            with db() as conn:
-                bal = core.adjust(conn, uid, payout, "game_win", f"Краш #{self.round_id}: забрал x{m:.2f}", ref=f"crash:{self.round_id}")
+
+# ------------------------------- запись итога в БД -------------------------------
+def _db_finish(r, status):
+    """Итог раунда в Turso. status: won | lost."""
+    uid = r["uid"]
+    try:
+        with db() as conn:
+            if status == "won":
+                core.adjust(conn, uid, r["payout"], "game_win", f"Краш #{r['id']}: забрал x{r['mult']:.2f}", ref=f"crash:{r['id']}")
                 conn.execute(
                     "UPDATE crash_bets SET cashed_at=?, payout=?, status='won' WHERE round_id=? AND user_id=? AND status='open'",
-                    (m, payout, self.round_id, uid),
+                    (r["mult"], r["payout"], r["id"], uid),
                 )
-                core.log_round(conn, uid, "crash", b["amount"], payout, m, {"round": self.round_id, "auto": b["auto"]})
-                core.set_max(conn, uid, "biggest_win", payout)
-                core.set_max(conn, uid, "crash_best_x", int(m))
-                if m >= 2:
+                core.log_round(conn, uid, "crash", r["amount"], r["payout"], r["mult"], {"round": r["id"], "auto": r["auto"], "crash": r["cp"]})
+                core.set_max(conn, uid, "biggest_win", r["payout"])
+                core.set_max(conn, uid, "crash_best_x", int(r["mult"]))
+                if r["mult"] >= 2:
                     core.quest_event(conn, uid, "crash_2x", 1)
-            b["cashed"], b["payout"] = m, payout
-        self.push()
-        return {"ok": True, "mult": m, "payout": payout, "balance": bal, "unlocked": core.pop_unlocked()}
+            else:
+                conn.execute("UPDATE crash_bets SET status='lost' WHERE round_id=? AND user_id=? AND status='open'", (r["id"], uid))
+                core.log_round(conn, uid, "crash", r["amount"], 0, 0, {"round": r["id"], "crash": r["cp"]})
+            conn.execute("UPDATE crash_rounds SET status='done' WHERE id=?", (r["id"],))
+    except Exception as e:
+        log.exception("crash finish failed: %s", e)
 
-    # -------------------------- чат --------------------------
-    def post_chat(self, user, text):
-        uid = int(user["id"])
-        text = " ".join(str(text or "").split())[:200]
-        if not text:
-            raise HTTPException(400, "Пустое сообщение")
-        now = time.time()
-        if now - self.last_chat.get(uid, 0) < 2:
-            raise HTTPException(429, "Не так быстро")
-        self.last_chat[uid] = now
-        name = display_name(user)
-        with db() as conn:
-            mid = conn.execute("INSERT INTO chat_messages (user_id, name, text, created_at) VALUES (?,?,?,?)", (uid, name, text, now_iso())).lastrowid
-        msg = {"id": mid, "uid": uid, "name": name, "text": text, "ts": now}
-        self.chat.append(msg)
-        self.push({"t": "chat", "msg": msg})
-        return {"ok": True}
 
-    # -------------------------- жизненный цикл --------------------------
-    def _recover(self, min_age):
-        """Вернуть ставки прерванных раундов (старше min_age секунд)."""
-        cutoff = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - min_age))
-        with db() as conn:
-            rows = all_(conn, "SELECT id, user_id, amount, round_id FROM crash_bets WHERE status='open' AND created_at<?", (cutoff,))
-            for bid, uid, amount, rid in rows:
-                cur = conn.execute("UPDATE crash_bets SET status='refunded' WHERE id=? AND status='open'", (bid,))
-                if core.changed(cur, conn) == 1:
-                    core.adjust(conn, uid, amount, "refund", f"Возврат: раунд Краша #{rid} прерван", ref=f"crash:{rid}")
-            conn.execute("UPDATE crash_rounds SET status='aborted' WHERE status='live' AND created_at<?", (cutoff,))
-            hist = all_(conn, "SELECT id, crash_point FROM crash_rounds WHERE status='done' ORDER BY id DESC LIMIT 20")
-            msgs = all_(conn, "SELECT id, user_id, name, text, created_at FROM chat_messages ORDER BY id DESC LIMIT 40")
-        return rows, hist, msgs
+def _db_finish_bg(r, status):
+    """Проигрыш можно записать уже после ответа игроку — он не ждёт Turso."""
+    t = asyncio.get_running_loop().run_in_executor(None, _db_finish, r, status)
+    _bg.add(t)
+    t.add_done_callback(_bg.discard)
 
-    def _new_round(self):
+
+# ------------------------------- логика раунда -------------------------------
+def _resolve_locked(r, now):
+    """Если у раунда наступило событие (краш/автовывод) — зафиксировать результат в памяти.
+    Возвращает 'won' | 'lost' | None (ничего не изменилось). Вызывать под user_lock."""
+    if r["status"] != "running":
+        return None
+    ts, is_auto = _event_ts(r)
+    if now < ts:
+        return None
+    if is_auto:
+        r["status"], r["mult"] = "cashed", float(r["auto"])
+        r["payout"] = core.pay(r["amount"], r["mult"])
+        return "won"
+    r["status"], r["mult"], r["payout"] = "crashed", 0.0, 0
+    return "lost"
+
+
+def start_round(user, amount, auto):
+    uid = int(user["id"])
+    amount = core.check_amount(amount, 1, MAX_BET)
+    if auto is not None:
+        try:
+            auto = round(float(auto), 2)
+        except Exception:
+            raise HTTPException(400, "Неверный автовывод")
+        if not (1.01 <= auto <= MAX_CRASH):
+            raise HTTPException(400, "Автовывод от 1.01x")
+    with user_lock(uid):
+        old = ACTIVE.get(uid)
+        if old and old["status"] == "running":
+            res = _resolve_locked(old, time.time())
+            if res is None:
+                raise HTTPException(400, "Раунд уже идёт — заберите выигрыш")
+            _db_finish(old, res)  # прошлый раунд закончился, пока клиент не спрашивал
         seed = secrets.token_hex(16)
         cp = crash_from_seed(seed)
         sh = hashlib.sha256(seed.encode()).hexdigest()
+        with db() as conn:  # одна транзакция: ставка + раунд
+            touch_user(conn, user)
+            core.game_bet(conn, uid, amount, "crash", "Ставка: Краш")
+            core.game_done(conn, uid, "crash")
+            rid = conn.execute("INSERT INTO crash_rounds (seed, seed_hash, crash_point, created_at) VALUES (?,?,?,?)", (seed, sh, cp, now_iso())).lastrowid
+            conn.execute(
+                "INSERT INTO crash_bets (round_id, user_id, amount, auto_cashout, created_at) VALUES (?,?,?,?,?)",
+                (rid, uid, amount, auto, now_iso()),
+            )
+            bal = core.balance_of(conn, uid)
+        r = {"id": rid, "uid": uid, "seed": seed, "seed_hash": sh, "cp": cp, "amount": amount, "auto": auto,
+             "status": "running", "mult": 0.0, "payout": 0, "start": time.time()}  # старт — ПОСЛЕ записи в БД
+        with _guard:
+            if len(ACTIVE) > 2000:
+                for k in [k for k, v in ACTIVE.items() if v["status"] != "running"][:1000]:
+                    ACTIVE.pop(k, None)
+            ACTIVE[uid] = r
+        out = _view(r, bal)
+        out["unlocked"] = core.pop_unlocked()
+        return out
+
+
+def cash_out(uid):
+    with user_lock(uid):
+        r = ACTIVE.get(uid)
+        if not r or r["status"] != "running":
+            raise HTTPException(400, "Нет активного раунда")
+        now = time.time()
+        res = _resolve_locked(r, now)  # автовывод/краш могли наступить раньше клика
+        if res is None:
+            m = max(1.0, _floor2(mult_at(now - r["start"])))
+            r["status"], r["mult"], r["payout"] = "cashed", m, core.pay(r["amount"], m)
+            res = "won"
+        if res == "lost":
+            _db_finish(r, "lost")
+            raise HTTPException(400, "Раунд уже завершён — крэш")
+        _db_finish(r, "won")
         with db() as conn:
-            rid = conn.execute(
-                "INSERT INTO crash_rounds (seed, seed_hash, crash_point, created_at) VALUES (?,?,?,?)", (seed, sh, cp, now_iso())
-            ).lastrowid
-        with self.lock:
-            self.round_id, self.seed, self.seed_hash, self.cp = rid, seed, sh, cp
-            self.bets = {}
-            self.bet_end = time.time() + BET_WINDOW
-            self.start = self.bet_end
-            self.crash_ts = self.start + math.log(cp) / GROWTH
-            self.phase = "betting"
-
-    def _finish(self):
-        with self.lock:
-            self.phase = "crashed"
-            losers = [b for b in self.bets.values() if not b["cashed"]]
-            self.history.append({"id": self.round_id, "cp": self.cp})
-        try:
-            with db() as conn:
-                conn.execute("UPDATE crash_bets SET status='lost' WHERE round_id=? AND status='open'", (self.round_id,))
-                conn.execute("UPDATE crash_rounds SET status='done' WHERE id=?", (self.round_id,))
-                for b in losers:
-                    core.log_round(conn, b["uid"], "crash", b["amount"], 0, 0, {"round": self.round_id, "crash": self.cp})
-        except Exception as e:
-            log.exception("crash finish failed: %s", e)
-
-    def _autos(self, m):
-        with self.lock:
-            due = [b for b in self.bets.values() if not b["cashed"] and b["auto"] and m >= b["auto"]]
-        for b in due:
-            try:
-                self.cash(b["uid"], forced=b["auto"])
-            except HTTPException:
-                pass
-            except Exception as e:
-                log.exception("auto cashout failed: %s", e)
-
-    async def run(self):
-        try:
-            rows, hist, msgs = await asyncio.to_thread(self._recover, 60)
-            for h in reversed(hist):
-                self.history.append({"id": h[0], "cp": h[1]})
-            for m in reversed(msgs):
-                self.chat.append({"id": m[0], "uid": m[1], "name": m[2], "text": m[3], "ts": 0})
-            if rows:
-                log.info("Краш: возвращено ставок прерванных раундов: %s", len(rows))
-            asyncio.get_running_loop().call_later(90, lambda: asyncio.create_task(asyncio.to_thread(self._recover, 60)))
-        except Exception as e:
-            log.exception("crash recover failed: %s", e)
-        while True:
-            try:
-                await asyncio.to_thread(self._new_round)
-                await self._broadcast()
-                await asyncio.sleep(max(0, self.bet_end - time.time()))
-                with self.lock:
-                    self.phase = "running"
-                await self._broadcast()
-                while time.time() < self.crash_ts:
-                    if self._has_autos():
-                        await asyncio.to_thread(self._autos, mult_at(time.time() - self.start))
-                    await asyncio.sleep(0.05)
-                await asyncio.to_thread(self._finish)
-                await self._broadcast()
-                await asyncio.sleep(CRASH_PAUSE)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                log.exception("crash loop error: %s", e)
-                await asyncio.sleep(3)
-
-    def _has_autos(self):
-        m = mult_at(time.time() - self.start)
-        return any((not b["cashed"]) and b["auto"] and m >= b["auto"] for b in list(self.bets.values()))
-
-    def start_loop(self):
-        if self.task is None or self.task.done():
-            self.task = asyncio.create_task(self.run())
+            bal = core.balance_of(conn, uid)
+        out = _view(r, bal)
+        out["unlocked"] = core.pop_unlocked()
+        return out
 
 
-engine = Engine()
+def settle_due(uid):
+    """Состояние раунда игрока; если событие уже наступило — зафиксировать его."""
+    with user_lock(uid):
+        r = ACTIVE.get(uid)
+        if not r:
+            return None
+        res = _resolve_locked(r, time.time())
+        if res:
+            _db_finish(r, res)
+        return _view(r)
+
+
+def recover():
+    """При старте сервера: незавершённые раунды (память потеряна) — возврат ставки,
+    а если по времени раунд уже должен был закончиться — фиксируем проигрыш."""
+    try:
+        with db() as conn:
+            rows = all_(
+                conn,
+                "SELECT b.id, b.user_id, b.amount, b.round_id, b.created_at, r.crash_point "
+                "FROM crash_bets b JOIN crash_rounds r ON r.id=b.round_id WHERE b.status='open'",
+            )
+            n = 0
+            for bid, uid, amount, rid, created, cp in rows:
+                try:
+                    started = timegm(time.strptime(created[:19], "%Y-%m-%dT%H:%M:%S"))
+                except Exception:
+                    started = 0
+                over = time.time() > started + math.log(max(cp, 1.0)) / GROWTH + 5
+                if over:
+                    conn.execute("UPDATE crash_bets SET status='lost' WHERE id=? AND status='open'", (bid,))
+                else:
+                    cur = conn.execute("UPDATE crash_bets SET status='refunded' WHERE id=? AND status='open'", (bid,))
+                    if core.changed(cur, conn) == 1:
+                        core.adjust(conn, uid, amount, "refund", f"Возврат: раунд Краша #{rid} прерван", ref=f"crash:{rid}")
+                        n += 1
+                conn.execute("UPDATE crash_rounds SET status='done' WHERE id=?", (rid,))
+            conn.execute("UPDATE crash_rounds SET status='aborted' WHERE status='live'")
+        if n:
+            log.info("Краш: возвращено ставок прерванных раундов: %s", n)
+    except Exception as e:
+        log.exception("crash recover failed: %s", e)
 
 
 # ------------------------------- HTTP -------------------------------
-@router.get("/api/v2/crash/state")
-def state(request: Request, since: int = 0):
-    auth(request)
-    snap = engine.snapshot()
-    snap["chat"] = [m for m in list(engine.chat) if m["id"] > since]
-    return snap
-
-
-@router.post("/api/v2/crash/bet")
-def bet(request: Request, body: dict = Body(...)):
-    return engine.place_bet(auth(request), body.get("amount"), body.get("auto") or None)
+@router.post("/api/v2/crash/start")
+def api_start(request: Request, body: dict = Body(...)):
+    return start_round(auth(request), body.get("bet", body.get("amount")), body.get("auto") or None)
 
 
 @router.post("/api/v2/crash/cashout")
-def cashout(request: Request):
-    return engine.cash(int(auth(request)["id"]))
+def api_cashout(request: Request):
+    return cash_out(int(auth(request)["id"]))
 
 
-@router.post("/api/v2/crash/chat")
-def chat(request: Request, body: dict = Body(...)):
-    return engine.post_chat(auth(request), body.get("text"))
+@router.get("/api/v2/crash/state")
+def api_state(request: Request):
+    """Текущий раунд игрока (если он есть) — чтобы вернуться в игру после перезахода."""
+    uid = int(auth(request)["id"])
+    return settle_due(uid) or {"ok": True, "phase": "idle", "server_time": time.time()}
+
+
+@router.get("/api/v2/crash/wait")
+async def api_wait(request: Request, round: int = 0):
+    """Long-poll: отвечает в момент краша/автовывода (клиент не знает точку краша заранее
+    и не опрашивает сервер каждые N мс). Пока раунд идёт — без запросов к БД."""
+    uid = int(auth(request)["id"])
+    deadline = time.time() + WAIT_SECONDS
+    while True:
+        r = ACTIVE.get(uid)
+        if not r or r["id"] != round or r["status"] != "running":
+            break
+        now = time.time()
+        ts, _ = _event_ts(r)
+        if now >= ts or now >= deadline:
+            break
+        await asyncio.sleep(max(0.02, min(ts - now, deadline - now, 0.25)))
+    r = ACTIVE.get(uid)
+    if not r or r["id"] != round:
+        return {"ok": True, "phase": "idle", "server_time": time.time()}
+    if r["status"] == "running" and time.time() >= _event_ts(r)[0]:
+        with user_lock(uid):
+            res = _resolve_locked(r, time.time())
+        if res == "lost":
+            _db_finish_bg(r, "lost")  # игрок видит крэш сразу, запись в БД — в фоне
+        elif res == "won":
+            await asyncio.to_thread(_db_finish, r, "won")
+        out = _view(r)
+        if res == "won":
+            out["unlocked"] = core.pop_unlocked()
+        return out
+    return _view(r)
 
 
 @router.get("/api/v2/crash/rounds")
 def rounds(request: Request):
-    auth(request)
+    """Последние завершённые раунды игрока (seed раскрыт — можно проверить честность)."""
+    uid = int(auth(request)["id"])
     with db() as conn:
-        rows = all_(conn, "SELECT id, crash_point, seed_hash, seed FROM crash_rounds WHERE status='done' ORDER BY id DESC LIMIT 20")
-    return [{"id": r[0], "crash_point": r[1], "seed_hash": r[2], "seed": r[3]} for r in rows]
-
-
-@router.websocket("/ws/crash")
-async def ws_crash(ws: WebSocket):
-    user = core.ctx.validate(ws.query_params.get("init", ""))
-    if not user:
-        await ws.close(code=4401)
-        return
-    await ws.accept()
-    engine.clients.add(ws)
-    try:
-        await ws.send_text(json.dumps({"t": "hello", "chat": list(engine.chat)}, ensure_ascii=False))
-        await ws.send_text(json.dumps(engine.snapshot(), ensure_ascii=False))
-        while True:
-            await ws.receive_text()  # клиент шлёт ping; нужен, чтобы заметить отключение
-    except (WebSocketDisconnect, Exception):
-        pass
-    finally:
-        engine.clients.discard(ws)
+        rows = all_(
+            conn,
+            "SELECT r.id, r.crash_point, r.seed_hash, r.seed, b.amount, b.payout, b.status FROM crash_bets b "
+            "JOIN crash_rounds r ON r.id=b.round_id WHERE b.user_id=? AND b.status IN ('won','lost') ORDER BY b.id DESC LIMIT 20",
+            (uid,),
+        )
+    return [{"id": r[0], "crash_point": r[1], "seed_hash": r[2], "seed": r[3], "bet": r[4], "payout": r[5], "status": r[6]} for r in rows]

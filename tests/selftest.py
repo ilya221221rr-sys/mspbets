@@ -1,7 +1,7 @@
 """
 Самопроверка бэкенда на ЛОКАЛЬНОЙ базе (Turso не трогается):
     python tests/selftest.py
-Проверяет: журнал == баланс, кейсы, апгрейд, мини-игры, ставки/экспресс/расчёт, задания, бонусы, нарды, краш.
+Проверяет: журнал == баланс, кейсы, апгрейд, мини-игры, ставки/экспресс/расчёт, задания, бонусы, краш.
 """
 import hashlib, hmac, json, os, sys, time, tempfile, logging, datetime
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -15,7 +15,7 @@ import libsql
 _real = libsql.connect
 libsql.connect = lambda *a, **k: _real(DB)
 import app as A
-from extras import core, nards, games, crash, catalog
+from extras import core, games, crash, catalog
 from fastapi.testclient import TestClient
 
 core.ctx.bot = None  # без реальной отправки в Telegram
@@ -205,74 +205,58 @@ with TestClient(A.app) as c:
     core.invalidate_tournaments(); f1.post("/api/v2/games/coin", {"bet": 100, "side": "tails"})
     ts = f1.get("/api/v2/tournaments").json(); check("очки турнира растут", [t for t in ts if t["id"] == open_t["id"]][0]["score"] == 100)
 
-    print("\n== нарды")
-    pos = nards.initial_pos()
-    mv = nards.legal_first(pos, 0, (3, 1)); check(f"ход 3-1 из начальной позиции: {len(mv)} вариантов (ожидается 7)", len(mv) == 7)
-    check("дубль даёт 4 хода", nards.max_play(pos, 0, (6, 6, 6, 6)) in (1, 2, 3, 4))
-    import random as _r
-    bad = 0
-    for g in range(60):  # инварианты правил: у каждой стороны всегда 15 шашек, нет «смешанных» пунктов
-        pos = nards.initial_pos(); side = g % 2
-        for _t in range(400):
-            d1, d2 = _r.randint(1, 6), _r.randint(1, 6); dice = [d1] * 4 if d1 == d2 else [d1, d2]
-            while dice:
-                c_ = nards.legal_first(pos, side, tuple(dice))
-                if not c_: break
-                m, die = _r.choice(c_); pos, _ = nards.apply_move(pos, side, m); dice.remove(die)
-                pts, bar, off = pos
-                if sum(x for x in pts if x > 0) + bar[0] + off[0] != 15 or -sum(x for x in pts if x < 0) + bar[1] + off[1] != 15: bad += 1
-            if pos[2][side] == 15: break
-            side = 1 - side
-    check("инварианты нард: 60 случайных партий, шашек всегда 15+15", bad == 0, bad)
-    wins = 0; games_n = 12; t0 = time.time()
-    for g in range(games_n):
-        st = nards.new_state(); ev = []
-        while st["winner"] is None:
-            nards.run(st, ev)
-            if st["winner"]: break
-            pos = nards.to_pos(st); cands = nards.legal_first(pos, 0, st["dice"])
-            assert cands, "нет ходов у игрока, а ход не передан"
-            m, die = _r.choice(cands) if g % 2 else max(cands, key=lambda c: -c[0][1] if c[0][1] >= 0 else 99)
-            pos, _ = nards.apply_move(pos, 0, m); nards.from_pos(st, pos); st["dice"].remove(die)
-            if st["off"][0] == 15: st["winner"] = "p"
-        wins += st["winner"] == "p"
-    check(f"12 партий бот-vs-случайный доиграны ({time.time()-t0:.1f} c), побед случайного игрока: {wins}", True)
-    nr = u.post("/api/v2/nards/start", {"bet": 100}); check("нарды старт", nr.status_code == 200 and nr.json()["state"]["bet"] == 100, nr.text[:200])
-    st = nr.json()["state"]; steps = 0
-    while st["winner"] is None and steps < 400:
-        if not st["legal"]: st = u.get("/api/v2/nards/state").json()["state"]; steps += 1; continue
-        l = st["legal"][0]; mr = u.post("/api/v2/nards/move", {"frm": l["frm"], "to": l["to"]}); assert mr.status_code == 200, mr.text
-        st = mr.json()["state"]; steps += 1
-        if steps > 60: break
-    if st["winner"] is None:
-        check("сдача партии", u.post("/api/v2/nards/resign").status_code == 200)
-    check("недопустимый ход отклонён", u.post("/api/v2/nards/start", {"bet": 50}).status_code == 200 and u.post("/api/v2/nards/move", {"frm": 0, "to": 1}).status_code == 400)
-    u.post("/api/v2/nards/resign")
-    journal_ok(100, "после нард")
+    print("\n== краш (обычный: раунд только по кнопке «Играть»)")
+    cu = U(c, 400, "Краш1"); cu.get("/api/v2/me")
+    check("без раунда: состояние idle", cu.get("/api/v2/crash/state").json()["phase"] == "idle")
+    check("кэшаут без раунда нельзя", cu.post("/api/v2/crash/cashout").status_code == 400)
+    check("в фоне нет живого движка краша", not hasattr(crash, "engine") and not any(r.path.startswith("/ws/") for r in A.app.routes))
+    real_cfs = crash.crash_from_seed
+    try:
+        crash.crash_from_seed = lambda seed: 5.0
+        r1 = cu.post("/api/v2/crash/start", {"bet": 100}); j = r1.json()
+        check("старт раунда", r1.status_code == 200 and j["phase"] == "running" and j["seed_hash"] and j["crash_point"] is None and j["seed"] is None, r1.text)
+        check("второй раунд поверх нельзя", cu.post("/api/v2/crash/start", {"bet": 100}).status_code == 400)
+        st = cu.get("/api/v2/crash/state").json(); check("состояние: раунд идёт (возврат в игру)", st["phase"] == "running" and st["round_id"] == j["round_id"])
+        time.sleep(1.2)
+        co = cu.post("/api/v2/crash/cashout"); cj = co.json()
+        exp = crash.mult_at(1.2)
+        check(f"кэшаут по времени: x{cj.get('mult')} ≈ x{exp:.2f}", co.status_code == 200 and abs(cj["mult"] - exp) < 0.08 and cj["payout"] == core.pay(100, cj["mult"]), co.text)
+        check("после кэшаута seed раскрыт", cj["phase"] == "cashed" and cj["seed"] and cj["crash_point"] == 5.0)
+        check("кэшаут дважды нельзя", cu.post("/api/v2/crash/cashout").status_code == 400)
+        journal_ok(400, "краш: ручной кэшаут")
 
-    print("\n== краш по раундам (общий раунд, WS, чат)")
-    cu = U(c, 400, "Краш1"); cu2 = U(c, 401, "Краш2")
-    for x in (cu, cu2): x.get("/api/v2/me")
-    deadline = time.time() + 40
-    while time.time() < deadline and cu.get("/api/v2/crash/state").json()["phase"] != "betting": time.sleep(0.2)
-    s = cu.get("/api/v2/crash/state").json(); check("фаза ставок, есть seed_hash, нет crash_point", s["phase"] == "betting" and s["seed_hash"] and s["crash_point"] is None and "seed" in s and s["seed"] is None)
-    b = cu.post("/api/v2/crash/bet", {"amount": 100, "auto": 1.5}); check("ставка в краше", b.status_code == 200, b.text)
-    check("вторая ставка в раунде нельзя", cu.post("/api/v2/crash/bet", {"amount": 100}).status_code == 400)
-    check("ставка второго игрока", cu2.post("/api/v2/crash/bet", {"amount": 200}).status_code == 200)
-    check("лента ставок видит обоих", len(cu.get("/api/v2/crash/state").json()["bets"]) == 2)
-    check("чат", cu.post("/api/v2/crash/chat", {"text": "всем привет"}).status_code == 200 and any(m["text"] == "всем привет" for m in cu2.get("/api/v2/crash/state").json()["chat"]))
-    with c.websocket_connect("/ws/crash?init=" + __import__("urllib.parse").parse.quote(init_data(400), safe="")) as ws:
-        hello = ws.receive_json(); snap = ws.receive_json(); check("WebSocket hello+state", hello["t"] == "hello" and snap["t"] == "state")
-    check("WS без авторизации закрыт", True)
-    while time.time() < deadline and cu.get("/api/v2/crash/state").json()["phase"] != "crashed": time.sleep(0.3)
-    s = cu.get("/api/v2/crash/state").json(); check(f"раунд завершён, crash_point={s['crash_point']}, seed раскрыт", s["phase"] == "crashed" and s["seed"])
-    cp = crash.crash_from_seed(s["seed"]); check("crash_point проверяем по seed (HMAC)", cp == s["crash_point"])
-    check("hash(seed) совпал с показанным до раунда", __import__("hashlib").sha256(s["seed"].encode()).hexdigest() == s["seed_hash"])
-    bets = {b["name"]: b for b in s["bets"]}
-    if s["crash_point"] >= 1.5: check("автовывод 1.5x сработал", bets["Краш1"]["cashed"] == 1.5 and bets["Краш1"]["payout"] == 150, bets["Краш1"])
-    else: check("краш ниже автовывода — ставка проиграна", bets["Краш1"]["cashed"] is None)
-    check("проигравший/победитель верно в БД", True)
-    journal_ok(400, "краш1"); journal_ok(401, "краш2")
+        crash.crash_from_seed = lambda seed: 1.2   # крэш через ln(1.2)/0.1 ≈ 1.8 c
+        j = cu.post("/api/v2/crash/start", {"bet": 100}).json(); t0 = time.time()
+        w = cu.get(f"/api/v2/crash/wait?round={j['round_id']}").json()
+        check(f"long-poll ответил в момент краша ({time.time()-t0:.1f} c)", w["phase"] == "crashed" and 1.5 < time.time() - t0 < 2.6 and w["crash_point"] == 1.2 and w["seed"], w)
+        check("hash(seed) совпал с показанным до раунда", __import__("hashlib").sha256(w["seed"].encode()).hexdigest() == j["seed_hash"])
+        check("кэшаут после краха нельзя", cu.post("/api/v2/crash/cashout").status_code == 400)
+        time.sleep(0.6)
+
+        j = cu.post("/api/v2/crash/start", {"bet": 100, "auto": 1.1}).json()
+        w = cu.get(f"/api/v2/crash/wait?round={j['round_id']}").json()
+        check("автовывод 1.1x сработал (краш на 1.2x позже)", w["phase"] == "cashed" and w["mult"] == 1.1 and w["payout"] == 110, w)
+        time.sleep(0.6)
+
+        crash.crash_from_seed = lambda seed: 1.0   # мгновенный краш
+        j = cu.post("/api/v2/crash/start", {"bet": 100}).json()
+        check("краш на 1.00x: кэшаут отклонён", cu.post("/api/v2/crash/cashout").status_code == 400)
+        time.sleep(0.6)
+        check("после мгновенного краха можно играть снова", cu.post("/api/v2/crash/start", {"bet": 100}).status_code == 200)
+        time.sleep(0.6); cu.post("/api/v2/crash/cashout")
+        check("неверный автовывод отклонён", cu.post("/api/v2/crash/start", {"bet": 100, "auto": 1.0}).status_code == 400)
+        check("ставка больше баланса отклонена", cu.post("/api/v2/crash/start", {"bet": 99_999_999}).status_code in (400, 402, 422))
+
+        crash.crash_from_seed = lambda seed: 50.0  # долгий раунд — «перезапуск сервера» посреди него
+        bal0 = cu.get("/api/v2/me").json()["balance"]
+        cu.post("/api/v2/crash/start", {"bet": 100}); bal1 = cu.get("/api/v2/me").json()["balance"]
+        crash.ACTIVE.clear(); crash.recover()
+        bal2 = cu.get("/api/v2/me").json()["balance"]
+        check("перезапуск посреди раунда: ставка возвращена", bal1 == bal0 - 100 and bal2 == bal0, (bal0, bal1, bal2))
+    finally:
+        crash.crash_from_seed = real_cfs
+    rr = cu.get("/api/v2/crash/rounds").json(); check("история раундов игрока (seed раскрыт)", len(rr) >= 3 and all(x["seed"] and crash.crash_from_seed(x["seed"]) is not None for x in rr))
+    journal_ok(400, "краш: все сценарии")
     # RTP крэш-распределения
     import statistics
     N = 200000; hit2 = sum(crash.crash_from_seed(os.urandom(8).hex()) >= 2 for _ in range(N)) / N

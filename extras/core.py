@@ -161,10 +161,7 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS mines_games (
         user_id INTEGER PRIMARY KEY, bet INTEGER NOT NULL, mines INTEGER NOT NULL,
         positions TEXT NOT NULL, revealed TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL)""",
-    """CREATE TABLE IF NOT EXISTS nards_games (
-        user_id INTEGER PRIMARY KEY, bet INTEGER NOT NULL, state TEXT NOT NULL,
-        created_at TEXT NOT NULL)""",
-    # --- краш по раундам ---
+    # --- краш (одиночные раунды) ---
     """CREATE TABLE IF NOT EXISTS crash_rounds (
         id INTEGER PRIMARY KEY AUTOINCREMENT, seed TEXT NOT NULL, seed_hash TEXT NOT NULL,
         crash_point REAL NOT NULL, status TEXT NOT NULL DEFAULT 'live', created_at TEXT NOT NULL)""",
@@ -312,8 +309,6 @@ ACH = {
     "crash_10x": ("Космонавт", "Забери x10 в Краше", "🛸", 500, "crash_best_x", 10),
     "mines_10": ("Сапёр", "Открой 10 ячеек в одной партии Мин", "💣", 500, "mines_best", 10),
     "plinko_big": ("Шарик-везунчик", "Выиграй x50 в Plinko", "🔮", 800, "plinko_best_x", 50),
-    "nards_1": ("Нардист", "Обыграй бота в нарды", "🎲", 400, "nards_won", 1),
-    "nards_10": ("Мастер нард", "10 побед в нардах", "♟️", 2500, "nards_won", 10),
     "big_win": ("Крупный куш", "Выигрыш от 10 000 PTS за раз", "💰", 1000, "biggest_win", 10000),
     "ref_3": ("Душа компании", "3 друга сделали ставки по твоей ссылке", "🤝", 1500, "refs_paid", 3),
     "collector": ("Полный сет", "Собери коллекцию кейса целиком", "🏆", 1000, "collections_done", 1),
@@ -390,7 +385,6 @@ QUESTS = {  # key: (название, событие, цель, награда)
     "mines8": ("Открой 8 безопасных ячеек в Минах", "mines_safe", 8, 180),
     "wager1000": ("Поставь суммарно 1000 PTS", "wager", 1000, 200),
     "upgrade1": ("Сделай апгрейд скина", "upgrade", 1, 160),
-    "nards1": ("Сыграй партию в нарды", "nards_play", 1, 150),
 }
 FIXED_QUESTS = ["bet3", "express_win"]
 

@@ -496,7 +496,7 @@
   // ---------- Навигация ----------
   async function showTab(name) {
     $$('.panel').forEach((p) => p.classList.toggle('hidden', p.id !== name));
-    const PARENT = { crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', nards: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', rating: 'profile' };
+    const PARENT = { crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', rating: 'profile' };
     $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === (PARENT[name] || name)));
     if (window.MSP && MSP.leave) MSP.leave(name);
     window.scrollTo({ top: 0 });

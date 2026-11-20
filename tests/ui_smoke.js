@@ -62,12 +62,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   if (tg.length) { tg[0].click(); await sleep(150); $('up-go').click(); await sleep(4200); check('апгрейд выполнен (результат показан)', /УСПЕХ|Неудача/.test($('up-res').textContent), $('up-res').textContent); }
   await M.actions['cases-tab']({ dataset: { t: 'coll' } }); await sleep(600); check('коллекции', $$('.coll').length === 6);
   console.log('\n== игры');
-  await tab('crash'); await sleep(2500); check('краш: подключён, есть хеш', /хеш seed|seed/.test($('cr-fair').textContent), $('cr-fair').textContent.slice(0, 60));
-  let tries = 0; while (!/Поставить/.test($('cr-btn').textContent) && tries++ < 40) await sleep(500);
-  $('cr-btn').click(); await sleep(1200); check('краш: ставка видна в ленте', /Тест/.test($('cr-feed').textContent), $('cr-feed').textContent.slice(0, 80));
-  $('cr-chat-in').value = 'привет из теста'; $('cr-chat-form').dispatchEvent(new w.Event('submit', { cancelable: true })); await sleep(1200); check('краш: чат по WebSocket', /привет из теста/.test($('cr-chat').textContent));
-  tries = 0; while (!/завершён|Забр/.test($('cr-btn').textContent) && tries++ < 60) await sleep(500);
-  if (/Забр/.test($('cr-btn').textContent) && !$('cr-btn').disabled) { $('cr-btn').click(); await sleep(1000); }
+  await tab('crash'); await sleep(800); check('краш: раунд НЕ идёт сам, кнопка «Играть»', /^Играть$/.test($('cr-btn').textContent), $('cr-btn').textContent);
+  $('cr-btn').click(); await sleep(1500); check('краш: после «Играть» пошёл раунд (есть хеш, кнопка «Забрать»)', /хеш seed/.test($('cr-fair').textContent) && /Забрать/.test($('cr-btn').textContent), $('cr-btn').textContent);
+  $('cr-btn').click(); await sleep(1200); check('краш: забрал или крэш', /забрали|Крэш/i.test($('cr-status').textContent), $('cr-status').textContent);
   await tab('mines'); $('mn-mines').value = 3; $$('[data-action="mn-start"]')[0].click(); await sleep(1200); check('мины: партия началась (25 ячеек)', $$('.mcell').length === 25 && $('mn-setup').classList.contains('hidden'));
   $$('.mcell')[12].click(); await sleep(1200); check('мины: ячейка открыта или подрыв', $$('.mcell.safe').length === 1 || /БУМ/.test($('mn-res').textContent));
   if ($$('.mcell.safe').length) { $('mn-cashout').click(); await sleep(1200); check('мины: кэшаут', /\+\d/.test($('mn-res').textContent), $('mn-res').textContent); }
@@ -75,14 +72,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await tab('dice'); $$('[data-action="dc-go"]')[0].click(); await sleep(1800); check('dice: результат', $('dc-res').textContent.length > 0, $('dc-res').textContent);
   await tab('wheel'); $$('[data-action="wh-go"]')[0].click(); await sleep(5200); check('колесо: результат', $('wh-res').textContent.length > 0, $('wh-res').textContent);
   await tab('coin'); $$('[data-action="cn-go"]')[0].click(); await sleep(2300); check('монетка: результат', $('cn-res').textContent.length > 0, $('cn-res').textContent);
-  await tab('nards'); $$('[data-action="nd-start"]')[0].click(); await sleep(5000);
-  check('нарды: доска (24 пункта, шашки)', $$('#nd-board .pt').length === 24 && $$('#nd-board .ck').length >= 20, $$('#nd-board .ck').length);
-  for (let i = 0; i < 6; i++) {
-    const can = $$('#nd-board .ck.can'); if (!can.length) { await sleep(800); continue; }
-    can[0].closest('.pt, [data-action="nd-pt"]').click(); await sleep(200); const dest = $$('#nd-board .pt.dest'); if (!dest.length) continue; dest[0].click(); await sleep(3500);
-  }
-  check('нарды: ход выполнен (pip/выброшено обновились)', /Выброшено/.test($('nd-pips').textContent), $('nd-pips').textContent);
-  check('нарды: сдаться', true); $$('[data-action="nd-resign"]')[0].click(); await sleep(300); $('dialog-ok').click(); await sleep(1000);
   console.log('\n== профиль игрока и баланс');
   await act('player', { uid: '777' }); await sleep(900); check('публичный профиль', /Последние ставки/.test($('player-body').textContent));
   await M.loadMe(); await tab('ledger'); await sleep(700); const kinds = $('ledger-list').textContent; check('журнал: игры, кейсы, бонус', /Кейс/.test(kinds) && /бонус/i.test(kinds), kinds.slice(0, 160));
