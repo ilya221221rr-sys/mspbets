@@ -228,6 +228,7 @@
             ${hasDraw ? oddBtn(e, 'X', 'Ничья', e.odds_x) : ''}
             ${oddBtn(e, '2', 'П2', e.odds_2)}
           </div>
+          <button type="button" class="ai-btn" data-action="ai-analyze" data-id="${e.id}">🤖 ИИ-анализ: на кого ставить?</button>
           <button type="button" class="bell${state.watch && state.watch.has(e.id) ? ' on' : ''}" data-action="watch" data-id="${e.id}">${state.watch && state.watch.has(e.id) ? '🔔 Уведомим, если кэф вырастет' : '🔕 Сообщить, если кэф вырастет'}</button>
         </article>`;
     };

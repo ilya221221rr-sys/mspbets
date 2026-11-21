@@ -313,3 +313,34 @@ html[data-theme="gta6"] .lg-head { border-left-color: var(--primary); background
 .sup-info small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sup-meta { flex: none; text-align: right; font-size: 10.5px; color: var(--muted); font-weight: 700; line-height: 1.4; }
 .sup-head { font-size: 13.5px; margin: 4px 0 10px; } .sup-head a { color: var(--primary-2); } .sup-head small { color: var(--muted); margin-left: 4px; }
+
+/* ---------- ИИ-аналитика матча (web/analytics.js) ---------- */
+.ai-btn { width: 100%; margin-top: 10px; padding: 9px; border-radius: 11px; font-size: 12.5px; font-weight: 800; color: #fff; background: linear-gradient(135deg, rgba(124, 92, 255, .55), rgba(34, 211, 238, .4)); border: 1px solid rgba(124, 92, 255, .6); box-shadow: 0 6px 18px rgba(124, 92, 255, .22); }
+.ai-btn:active { transform: scale(.98); }
+.ai-btn + .bell { margin-top: 8px; }
+.ai-sheet { max-height: 92vh; overflow-y: auto; }
+.ai-match { font-weight: 800; font-size: 15px; margin-bottom: 12px; color: var(--primary-2); } .ai-match small { color: var(--muted); font-weight: 600; }
+.ai-loading { display: flex; align-items: center; gap: 14px; padding: 22px 6px; color: var(--text); font-size: 14px; font-weight: 700; }
+.ai-loading small { display: block; color: var(--muted); font-weight: 600; font-size: 12px; margin-top: 3px; }
+.ai-spin { width: 34px; height: 34px; flex: none; border-radius: 50%; border: 3px solid var(--line-2); border-top-color: var(--primary); animation: aispin .8s linear infinite; }
+@keyframes aispin { to { transform: rotate(360deg); } }
+.ai-pick { display: grid; gap: 2px; padding: 14px 16px; border-radius: var(--r-md); background: linear-gradient(135deg, rgba(46, 229, 157, .16), rgba(34, 211, 238, .1)); border: 1px solid rgba(46, 229, 157, .45); }
+.ai-pick small { color: var(--muted); font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.ai-pick b { font-family: var(--font-display); font-size: 18px; line-height: 1.25; }
+.ai-pick .ai-odd { color: var(--gold); font-weight: 800; font-size: 13px; }
+.ai-pick.skip { background: rgba(255, 164, 60, .1); border-color: rgba(255, 164, 60, .45); }
+.ai-conf { margin: 14px 0 6px; }
+.ai-conf-top { display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 700; color: var(--muted); margin-bottom: 5px; } .ai-conf-top b { color: var(--text); }
+.ai-bar { height: 7px; border-radius: 99px; background: var(--surface-3); overflow: hidden; } .ai-bar i { display: block; height: 100%; border-radius: 99px; background: var(--grad); }
+.ai-conf.high .ai-bar i { background: var(--win); } .ai-conf.mid .ai-bar i { background: var(--primary-2); } .ai-conf.low .ai-bar i { background: var(--warn); }
+.ai-headline { margin: 14px 0 6px; font-weight: 800; font-size: 14.5px; }
+.ai-reasons { margin: 0 0 10px; padding-left: 18px; display: grid; gap: 6px; font-size: 13.5px; line-height: 1.45; color: var(--text); } .ai-reasons li::marker { color: var(--primary-2); }
+.ai-risk { padding: 10px 12px; border-radius: var(--r-sm); background: rgba(255, 93, 122, .08); border: 1px solid rgba(255, 93, 122, .3); font-size: 12.5px; line-height: 1.45; }
+.ai-sub { margin: 14px 0 8px; font-size: 11.5px; font-weight: 700; color: var(--muted); }
+.ai-probs { display: grid; gap: 8px; margin-bottom: 14px; }
+.ai-prob { padding: 8px 10px; border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line); }
+.ai-prob.pick { border-color: rgba(46, 229, 157, .55); }
+.ai-prob-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 700; margin-bottom: 5px; } .ai-prob-top span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-prob small { color: var(--muted); font-size: 11px; }
+.ai-foot { margin-top: 12px; text-align: center; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.ai-error { padding: 16px 12px; margin-bottom: 12px; border-radius: var(--r-md); background: rgba(255, 93, 122, .08); border: 1px solid rgba(255, 93, 122, .3); font-size: 13.5px; }
