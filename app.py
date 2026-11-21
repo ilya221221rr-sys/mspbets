@@ -353,6 +353,9 @@ async def cmd_support_close(message: Message): await extras.support.bot_close_cm
 @dp.message(Command("tickets"))
 async def cmd_support_tickets(message: Message): await extras.support.bot_tickets_cmd(message)
 
+@dp.message(Command("aitest"))
+async def cmd_support_aitest(message: Message): await extras.support.bot_aitest_cmd(message)
+
 @dp.message(Command("human"))
 async def cmd_support_human(message: Message): await extras.support.bot_human_cmd(message)
 

@@ -429,40 +429,89 @@ def _build_messages(rows, image):
     return msgs
 
 
-def ai_answer(rows, image=None):
-    """Запрос к OpenAI-совместимому API. -> (текст, нужен_человек). Бросает AIError."""
+LAST_AI_ERROR = ""  # последняя ошибка ИИ — видна админу в /aitest и в уведомлении об эскалации
+
+
+def _ai_request(payload):
     import requests
 
-    payload = {"model": AI_MODEL, "messages": _build_messages(rows, image), "temperature": 0.3, "max_tokens": 900}
-    if "googleapis" in AI_URL:
-        payload["reasoning_effort"] = "none"  # быстрые ответы без «размышлений»
     try:
-        r = requests.post(
+        return requests.post(
             f"{AI_URL}/chat/completions",
             headers={"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"},
-            json=payload, timeout=30,
+            json=payload, timeout=40,
         )
     except Exception as e:
         raise AIError(f"network: {e}")
+
+
+def ai_answer(rows, image=None):
+    """Запрос к OpenAI-совместимому API. -> (текст, нужен_человек). Бросает AIError."""
+    global LAST_AI_ERROR
+    import time
+
+    payload = {"model": AI_MODEL, "messages": _build_messages(rows, image), "temperature": 0.3, "max_tokens": 1500}
+    if "googleapis" in AI_URL and AI_MODEL.startswith("gemini-2.5"):
+        payload["reasoning_effort"] = "none"  # быстрые ответы без «размышлений» (только модели 2.5)
+    r = None
+    for attempt in range(3):
+        r = _ai_request(payload)
+        if r.status_code == 200:
+            break
+        body = r.text[:400]
+        if r.status_code == 400 and "reasoning_effort" in payload:
+            payload.pop("reasoning_effort", None)  # модель не поддерживает параметр — пробуем без него
+            continue
+        if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+            time.sleep(2 * (attempt + 1))  # лимит/перегрузка — короткий повтор
+            continue
+        break
     if r.status_code != 200:
-        raise AIError(f"HTTP {r.status_code}: {r.text[:300]}")
+        LAST_AI_ERROR = f"HTTP {r.status_code}: {r.text[:300]}"
+        raise AIError(LAST_AI_ERROR)
     try:
-        text = (r.json()["choices"][0]["message"]["content"] or "").strip()
+        data = r.json()
+        if isinstance(data, list):  # Gemini иногда отдаёт ошибку/ответ списком
+            data = data[0]
+        text = (data["choices"][0]["message"]["content"] or "").strip()
     except Exception as e:
-        raise AIError(f"bad response: {e}")
+        LAST_AI_ERROR = f"bad response: {e}; {r.text[:200]}"
+        raise AIError(LAST_AI_ERROR)
     need_human = HUMAN_MARK in text
     text = text.replace(HUMAN_MARK, "").strip()
     if not text:
         if not need_human:
-            raise AIError("empty answer")
+            LAST_AI_ERROR = f"empty answer: {r.text[:200]}"
+            raise AIError(LAST_AI_ERROR)
         text = "Подключаю специалиста поддержки — он ответит вам здесь."
+    LAST_AI_ERROR = ""
     return text[:TEXT_MAX * 2], need_human
+
+
+def ai_diagnose():
+    """Проверка настроек ИИ для админа: -> строка с результатом."""
+    lines = [
+        f"AI_API_KEY: {'задан (' + str(len(AI_KEY)) + ' симв., ' + AI_KEY[:4] + '…)' if AI_KEY else 'НЕ ЗАДАН'}",
+        f"AI_ENABLED: {'да' if AI_ENABLED else 'нет'}  (AI_ENABLED env = {os.getenv('AI_ENABLED', '1')!r})",
+        f"AI_BASE_URL: {AI_URL}",
+        f"AI_MODEL: {AI_MODEL}",
+        f"AI_VISION: {AI_VISION}",
+    ]
+    if not AI_KEY:
+        lines.append("❌ Переменная AI_API_KEY не видна приложению. Проверьте имя (ровно AI_API_KEY) и сервис в Render.")
+        return "\n".join(lines)
+    try:
+        ans, _ = ai_answer([("user", "Как сделать ставку? Ответь в одном предложении.", None)])
+        lines.append(f"✅ ИИ отвечает: {ans[:200]}")
+    except AIError as e:
+        lines.append(f"❌ Ошибка запроса к ИИ: {e}")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------
 # Основной сценарий: сообщение игрока (из приложения или из бота)
 # --------------------------------------------------------------------------
-def _escalate(tid, uid, notice=None):
+def _escalate(tid, uid, notice=None, admin_note=None):
     """Перевести обращение к человеку и отправить админам выписку. -> True, если перевели сейчас."""
     with db() as conn:
         t = one(conn, "SELECT mode, status FROM support_tickets WHERE id=?", (tid,))
@@ -493,7 +542,7 @@ def _escalate(tid, uid, notice=None):
     lines = []
     for sender, text, fid in rows:
         lines.append(f"{lab.get(sender, '•')} {(text or '').strip()[:300]}{' 📎' if fid else ''}")
-    digest = "Игрок позвал человека. Выписка диалога:\n\n" + "\n".join(lines)
+    digest = (admin_note or "Игрок позвал человека.") + " Выписка диалога:\n\n" + "\n".join(lines)
     forward_threadsafe(tid, uid, name, username, digest[:3000], "🆘 <b>Нужен человек — обращение", last_img)
     return True
 
@@ -533,8 +582,9 @@ def process_user_message(user, text, image=None):
             rows = _history(conn, tid)
         answer, need_human = ai_answer(rows, image)
     except AIError as e:
-        log.warning("support AI failed: %s", e)
-        _escalate(tid, uid, "⚠️ ИИ-помощник сейчас недоступен — передал обращение специалисту.")
+        log.error("support AI failed: %s", e)
+        _escalate(tid, uid, "⚠️ ИИ-помощник сейчас недоступен — передал обращение специалисту.",
+                  admin_note=f"⚠️ ИИ не ответил: {str(e)[:350]}\n(проверьте /aitest).")
         res["escalated"], res["mode"] = True, "human"
         return res
     with db() as conn:
@@ -663,6 +713,12 @@ def admin_list(request: Request, status: str = "all"):
         ],
         "unread_total": sum(int(r[4] or 0) for r in rows if r[2] == "open"),
     }
+
+
+@router.get("/admin/support-ai-check")
+def admin_ai_check(request: Request):
+    _need_admin(request)
+    return {"report": ai_diagnose(), "last_error": LAST_AI_ERROR}
 
 
 @router.get("/admin/support/{ticket_id}")
@@ -943,3 +999,13 @@ async def bot_tickets_cmd(message):
         "📋 <b>Открытые обращения</b> (🤖 — отвечает ИИ, 👤 — ждёт человека)\n\n" + "\n".join(lines)
         + "\n\nОтвет: <code>/reply номер текст</code>"
     )
+
+
+async def bot_aitest_cmd(message):
+    """/aitest — админу: показать настройки ИИ и сделать тестовый запрос."""
+    if not message.from_user or message.from_user.id not in core.ctx.admin_ids:
+        await message.answer("⛔ У вас нет доступа к этой команде.")
+        return
+    await message.answer("⏳ Проверяю ИИ…")
+    report = await asyncio.to_thread(ai_diagnose)
+    await message.answer(html.escape(report))
