@@ -452,13 +452,13 @@ def _events_rows(include_all):
     conn = get_db()
     try:
         if include_all:  # админка: все незавершённые + последние 30 рассчитанных
-            cur = conn.execute("""SELECT e.id, e.sport, e.title, e.status, e.odds_1, e.odds_x, e.odds_2, e.starts_at, f.league
+            cur = conn.execute("""SELECT e.id, e.sport, e.title, e.status, e.odds_1, e.odds_x, e.odds_2, e.starts_at, f.league, f.home_logo, f.away_logo
                 FROM events e LEFT JOIN feed_events f ON f.event_id = e.id
                 WHERE e.status <> 'settled' OR e.id IN (SELECT id FROM events WHERE status='settled' ORDER BY id DESC LIMIT 30)
                 ORDER BY CASE WHEN e.status='open' THEN 0 ELSE 1 END, CASE WHEN e.starts_at IS NULL THEN 0 ELSE 1 END,
                          COALESCE(e.starts_at, ''), e.id DESC LIMIT 300""")
         else:  # игроки: только открытые матчи ближайших 48 часов (+ ручные матчи админа без даты)
-            cur = conn.execute("""SELECT e.id, e.sport, e.title, e.status, e.odds_1, e.odds_x, e.odds_2, e.starts_at, f.league
+            cur = conn.execute("""SELECT e.id, e.sport, e.title, e.status, e.odds_1, e.odds_x, e.odds_2, e.starts_at, f.league, f.home_logo, f.away_logo
                 FROM events e LEFT JOIN feed_events f ON f.event_id = e.id
                 WHERE e.status = 'open' AND (e.starts_at IS NULL OR (e.starts_at > ? AND e.starts_at <= ?))
                 ORDER BY CASE WHEN e.starts_at IS NULL THEN 0 ELSE 1 END, COALESCE(e.starts_at, ''), e.id DESC LIMIT 150""",
@@ -467,7 +467,7 @@ def _events_rows(include_all):
     finally:
         conn.close()
     return [{"id": r[0], "sport": r[1], "title": r[2], "status": r[3], "odds_1": r[4], "odds_x": r[5], "odds_2": r[6],
-             "starts_at": r[7], "league": r[8]} for r in rows]
+             "starts_at": r[7], "league": r[8], "home_logo": r[9], "away_logo": r[10]} for r in rows]
 
 
 @app.get("/api/events")

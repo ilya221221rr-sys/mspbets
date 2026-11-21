@@ -165,5 +165,34 @@ with TestClient(A.app) as c:
     flat = [m for m in seen[-1]["messages"] if isinstance(m["content"], list)]
     check("уточняющий вопрос: ИИ по-прежнему видит фото", len(flat) == 1, r)
 
+    print("\n== картинки CS2-кейсов")
+    cs2imgs = {i["image_url"] for x in cs2 for i in x["items"]} | {x["image_url"] for x in cs2}
+    missing = [u for u in cs2imgs if not os.path.exists(os.path.join(ROOT, u.lstrip("/")))]
+    check("для всех скинов и обложек CS2 есть файл", not missing, missing)
+    check("файл картинки отдаётся сервером", c.get(cs2[0]["items"][0]["image_url"]).status_code == 200)
+
+    print("\n== логотипы команд")
+    from extras import feed
+    from datetime import datetime, timedelta, timezone
+    st = {"new": 0, "updated": 0, "fresh": []}
+    start = datetime.now(timezone.utc) + timedelta(hours=3)
+    with core.db() as conn:
+        feed._upsert(conn, "espn", "espn:t:1", "Футбол", "Тест", "t", "Alpha FC", "Beta FC", start, (1.9, 3.3, 4.0), st, [],
+                     ("https://example.com/a.png", None))
+        feed._upsert(conn, "espn", "espn:t:2", "Футбол", "Тест", "t", "Gamma", "Delta", start, (1.9, 3.3, 4.0), st, [])
+    evs = {e["title"]: e for e in c.get("/api/events", headers=H(200)).json()}
+    check("логотип команды отдаётся в /api/events", evs["Alpha FC — Beta FC"]["home_logo"] == "https://example.com/a.png", evs)
+    check("нет логотипа — null, ошибки нет", evs["Gamma — Delta"]["home_logo"] is None and evs["Gamma — Delta"]["away_logo"] is None)
+    with core.db() as conn:  # повторная синхронизация догружает недостающий логотип
+        feed._upsert(conn, "espn", "espn:t:1", "Футбол", "Тест", "t", "Alpha FC", "Beta FC", start, (1.9, 3.3, 4.0), st, [],
+                     ("https://example.com/OTHER.png", "https://example.com/b.png"))
+    core_cache = getattr(A, "invalidate_events", None)
+    core_cache and core_cache()
+    evs = {e["title"]: e for e in c.get("/api/events", headers=H(200)).json()}
+    check("недостающий логотип догружается, имеющийся не затирается",
+          evs["Alpha FC — Beta FC"]["home_logo"] == "https://example.com/a.png" and evs["Alpha FC — Beta FC"]["away_logo"] == "https://example.com/b.png")
+    check("парсинг ESPN: логотип из team.logo",
+          feed._logo({"logo": "http://a.espncdn.com/x.png"}) == "https://a.espncdn.com/x.png" and feed._logo({"image_url": None}) is None)
+
 print(f"\nИтого: {OK} ок, {FAIL} ошибок")
 sys.exit(1 if FAIL else 0)

@@ -374,3 +374,18 @@ RTP 92% / 94%, шансы считаются из весов как у оста�
 Обложки: `python tools/gen_cs2_covers.py`.
 
 Тесты: `python tests/new_selftest.py`, `python tests/or_selftest.py`, `python tests/ai_selftest.py`, `python tests/selftest.py`.
+
+---
+
+## Логотипы команд в ставках + картинки скинов CS2
+
+**Логотипы команд.** В карточке матча над названием каждой команды показывается её логотип, в купоне — маленькие логотипы рядом с названиями.
+* Источники: ESPN (футбол, NBA, NHL) — `team.logo`; PandaScore (Dota 2 / CS2) — `opponent.image_url`.
+* Логотипы хранятся в `feed_events.home_logo / away_logo` (колонки добавляются сами при старте — `ALTER TABLE`, данные не теряются).
+* Уже загруженные матчи получат логотипы при ближайшей синхронизации (каждые `FEED_SYNC_MINUTES`).
+* Матчи, созданные админом вручную, берут логотип у другого матча с такой же командой; если логотипа нет или картинка не загрузилась — рисуется цветной кружок с инициалами.
+* Файлы: `extras/feed.py` (`_logo`, `_upsert`), `extras/core.py` (ALTERS), `app.py` (`/api/events` отдаёт `home_logo`/`away_logo`), `web/app.js` (`teamLogo`), `web/extra.css` (`.tlogo`).
+
+**Почему в кейсах CS2 не было картинок.** Каталог `extras/catalog.py` ссылается на `/web/cs2/<имя>.webp` и на обложки `/web/cases/cs2_popular.webp`, `cs2_legend.webp`, но этих файлов в репозитории никогда не было (папка `web/cs2/` не была закоммичена). Теперь они добавлены: 33 скина + 2 обложки.
+* Если нужно перекачать/добавить новые скины: `pip install requests pillow` → `python tools/fetch_cs2_images.py` (`--force` — перекачать всё). Скрипт берёт иконки из открытой базы ByMykel/CSGO-API (CDN Steam).
+* Тест `tests/new_selftest.py` теперь проверяет, что для каждого скина CS2 есть файл.

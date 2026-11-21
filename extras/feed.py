@@ -153,6 +153,14 @@ def espn_fetch(path, d1, d2):
     return list(out.values())
 
 
+def _logo(team):
+    """Ссылка на логотип команды (ESPN: team.logo / team.logos[0].href; PandaScore: image_url)."""
+    url = team.get("logo") or team.get("image_url") or ((team.get("logos") or [{}])[0].get("href"))
+    if not url or not isinstance(url, str):
+        return None
+    return ("https:" + url if url.startswith("//") else url.replace("http://", "https://", 1))[:500]
+
+
 def parse_event(e, has_draw):
     comp = (e.get("competitions") or [None])[0]
     if not comp:
@@ -162,6 +170,7 @@ def parse_event(e, has_draw):
         return None
     return {
         "id": str(e["id"]), "home": teams["home"]["team"]["displayName"], "away": teams["away"]["team"]["displayName"],
+        "home_logo": _logo(teams["home"]["team"]), "away_logo": _logo(teams["away"]["team"]),
         "start": datetime.fromisoformat(e["date"].replace("Z", "+00:00")).astimezone(timezone.utc),
         "state": (e.get("status") or {}).get("type", {}).get("state"),
         "odds": parse_espn_odds(comp, has_draw), "comp": comp,
@@ -202,6 +211,7 @@ def panda_matches(game, label):
         o1, ox, o2 = esports_odds.match_odds(rating, games, opp[0]["id"], opp[1]["id"], esports_odds.best_of_of(m))
         out.append({
             "id": f"ps:{game}:{m['id']}", "home": opp[0]["name"], "away": opp[1]["name"],
+            "home_logo": _logo(opp[0]), "away_logo": _logo(opp[1]),
             "start": datetime.fromisoformat(m["begin_at"].replace("Z", "+00:00")).astimezone(timezone.utc),
             "odds": (o1, ox, o2), "sport": label, "league": ((m.get("league") or {}).get("name") or label),
             "path": f"panda/{game}",
@@ -210,9 +220,13 @@ def panda_matches(game, label):
 
 
 # ------------------------------- синхронизация -------------------------------
-def _upsert(conn, source, ext, sport, league, path, home, away, start, odds, stats, notes):
-    row = one(conn, "SELECT event_id FROM feed_events WHERE ext_id=?", (ext,))
+def _upsert(conn, source, ext, sport, league, path, home, away, start, odds, stats, notes, logos=(None, None)):
+    row = one(conn, "SELECT event_id, home_logo, away_logo FROM feed_events WHERE ext_id=?", (ext,))
     if row:
+        if (logos[0] and not row[1]) or (logos[1] and not row[2]):  # догружаем логотипы для уже существующих матчей
+            conn.execute("UPDATE feed_events SET home_logo=COALESCE(home_logo, ?), away_logo=COALESCE(away_logo, ?) WHERE event_id=?",
+                         (logos[0], logos[1], row[0]))
+            stats["logos"] = stats.get("logos", 0) + 1
         ev = one(conn, "SELECT status, odds_1, odds_x, odds_2 FROM events WHERE id=?", (row[0],))
         if ev and ev[0] == "open" and (abs(ev[1] - odds[0]) >= 0.01 or abs((ev[3] or 0) - odds[2]) >= 0.01 or abs((ev[2] or 0) - (odds[1] or 0)) >= 0.01):
             conn.execute("UPDATE events SET odds_1=?, odds_x=?, odds_2=? WHERE id=?", (odds[0], odds[1], odds[2], row[0]))
@@ -228,8 +242,8 @@ def _upsert(conn, source, ext, sport, league, path, home, away, start, odds, sta
         (sport, f"{home} — {away}", start.strftime(ISO), "open", odds[0], odds[1], odds[2], core.now_iso()),
     ).lastrowid
     conn.execute(
-        "INSERT INTO feed_events (event_id, source, ext_id, league, sport_path, home, away, starts_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (eid, source, ext, league, path, home, away, start.strftime(ISO), core.now_iso()),
+        "INSERT INTO feed_events (event_id, source, ext_id, league, sport_path, home, away, starts_at, updated_at, home_logo, away_logo) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (eid, source, ext, league, path, home, away, start.strftime(ISO), core.now_iso(), logos[0], logos[1]),
     )
     stats["new"] += 1
     stats["fresh"].append((sport, league, home, away, odds))
@@ -247,7 +261,8 @@ def sync_once():
             parsed.sort(key=lambda p: p["start"])
             with db() as conn:
                 for p in parsed[:PER_LEAGUE]:
-                    _upsert(conn, "espn", f"espn:{path}:{p['id']}", sport, league, path, p["home"], p["away"], p["start"], p["odds"], stats, notes)
+                    _upsert(conn, "espn", f"espn:{path}:{p['id']}", sport, league, path, p["home"], p["away"], p["start"], p["odds"], stats, notes,
+                            (p.get("home_logo"), p.get("away_logo")))
                 core.notify_many(conn, notes)
                 notes.clear()
         except Exception as e:
@@ -259,7 +274,8 @@ def sync_once():
                 parsed = [p for p in panda_matches(game, label) if now < p["start"] <= d2]
                 with db() as conn:
                     for p in parsed[:PER_LEAGUE]:
-                        _upsert(conn, "panda", p["id"], p["sport"], p["league"], p["path"], p["home"], p["away"], p["start"], p["odds"], stats, notes)
+                        _upsert(conn, "panda", p["id"], p["sport"], p["league"], p["path"], p["home"], p["away"], p["start"], p["odds"], stats, notes,
+                                (p.get("home_logo"), p.get("away_logo")))
                     core.notify_many(conn, notes)
                     notes.clear()
             except Exception as e:

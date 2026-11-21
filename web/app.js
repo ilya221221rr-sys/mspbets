@@ -175,6 +175,44 @@
   const WINDOW_MS = 24 * 36e5;
   const inWindow = (e) => { if (!e.starts_at) return true; const t = new Date(e.starts_at).getTime(); return isNaN(t) || (t > Date.now() && t - Date.now() <= WINDOW_MS); };
 
+  // ---------- Логотипы команд ----------
+  // Логотип берём из матча (ESPN / PandaScore). Если его нет — ищем у другого матча с той же командой,
+  // а если и там нет (или картинка не загрузилась) — рисуем цветной кружок с инициалами.
+  const normTeam = (n) => String(n || '').toLowerCase().replace(/[^a-z0-9а-яё]+/g, '');
+  const logoIndex = () => {
+    if (state._logoFor === state.events) return state._logoIdx;
+    const m = new Map();
+    state.events.forEach((e) => {
+      const t = splitTeams(e.title);
+      if (!t) return;
+      if (e.home_logo) m.set(normTeam(t[0]), e.home_logo);
+      if (e.away_logo) m.set(normTeam(t[1]), e.away_logo);
+    });
+    state._logoFor = state.events; state._logoIdx = m;
+    return m;
+  };
+  const initials = (n) => {
+    const w = String(n || '?').replace(/[^\p{L}\p{N}\s]/gu, '').trim().split(/\s+/).filter(Boolean);
+    return ((w.length > 1 ? w[0][0] + w[1][0] : (w[0] || '?').slice(0, 2)) || '?').toUpperCase();
+  };
+  const teamHue = (n) => { let h = 0; for (const c of String(n)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+  function teamLogo(name, url, cls) {
+    const u = url || logoIndex().get(normTeam(name));
+    const ini = esc(initials(name));
+    const style = `--h:${teamHue(name)}`;
+    const img = u && /^https?:\/\//.test(u)
+      ? `<img class="tlogo-img" src="${esc(u)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-ini="${ini}">`
+      : '';
+    return `<span class="tlogo ${cls || ''}${img ? '' : ' noimg'}" style="${style}">${img || ini}</span>`;
+  }
+  // Если картинка логотипа не загрузилась — показываем инициалы
+  document.addEventListener('error', (ev) => {
+    const el = ev.target;
+    if (!el || el.tagName !== 'IMG' || !el.classList.contains('tlogo-img')) return;
+    const box = el.parentElement;
+    if (box) { box.classList.add('noimg'); box.textContent = el.dataset.ini || '?'; }
+  }, true);
+
   function splitTeams(title) {
     const p = String(title).split(/\s+[—–-]\s+/);
     return p.length === 2 ? p : null;
@@ -215,7 +253,7 @@
       const hasDraw = !!e.odds_x;
       const teams = splitTeams(e.title);
       const teamsHtml = teams
-        ? `<div class="team">${esc(teams[0])}</div><div class="vs">VS</div><div class="team">${esc(teams[1])}</div>`
+        ? `<div class="team">${teamLogo(teams[0], e.home_logo)}<span class="team-name">${esc(teams[0])}</span></div><div class="vs">VS</div><div class="team">${teamLogo(teams[1], e.away_logo)}<span class="team-name">${esc(teams[1])}</span></div>`
         : `<div class="team team-solo">${esc(e.title)}</div>`;
       return `
         <article class="match" data-id="${e.id}">
@@ -257,7 +295,9 @@
   // ---------- Купон (одинар) ----------
   function openSlip(ev, choice) {
     state.slip = { eventId: ev.id, choice, odds: Number(oddOf(ev, choice)) };
-    $('slip-event-title').textContent = ev.title;
+    const st = splitTeams(ev.title);
+    if (st) $('slip-event-title').innerHTML = `${teamLogo(st[0], ev.home_logo, 'sm')}<span>${esc(st[0])}</span><i>vs</i>${teamLogo(st[1], ev.away_logo, 'sm')}<span>${esc(st[1])}</span>`;
+    else $('slip-event-title').textContent = ev.title;
     $('slip-event-choice').textContent = `Ваш выбор: ${pickText(ev.title, choice)}`;
     $('slip-odds').textContent = odd2(state.slip.odds);
     $('slip-amount').value = 100;
