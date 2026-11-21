@@ -1,0 +1,52 @@
+=====================================================================
+ИЗМЕНЕНИЯ В app.py  (3 мелких правки)
+=====================================================================
+
+--- ПРАВКА 1. Строка импорта aiogram.types (вверху файла) ---------------
+БЫЛО:
+from aiogram.types import Update, WebAppInfo, MenuButtonWebApp, Message
+
+СТАЛО:
+from aiogram.types import Update, WebAppInfo, MenuButtonWebApp, Message, CallbackQuery
+
+
+--- ПРАВКА 2. Блок «ПОДДЕРЖКА (extras/support.py)» ----------------------
+Найдите в app.py эти строки:
+
+@dp.message(F.text & ~F.text.startswith("/"))
+async def on_plain_text(message: Message): await extras.support.bot_text(message)
+
+и ПРЯМО ПОСЛЕ них (до строки "# --- LIFESPAN ---") вставьте:
+
+@dp.message(Command("human"))
+async def cmd_support_human(message: Message): await extras.support.bot_human_cmd(message)
+
+@dp.message(F.photo)
+async def on_photo(message: Message): await extras.support.bot_photo(message)
+
+@dp.callback_query(F.data == "sup_human")
+async def on_support_human_btn(callback: CallbackQuery): await extras.support.bot_human_cb(callback)
+
+Важно: хендлер /human должен стоять ВЫШЕ любых «общих» хендлеров. В вашем файле
+on_plain_text уже игнорирует команды (~F.text.startswith("/")), так что порядок не критичен.
+
+
+--- ПРАВКА 3 (необязательная, но желательная). extras/__init__.py ------
+Чтобы таблицы поддержки создавались при старте (а не при первом обращении), в функции _init():
+
+БЫЛО:
+def _init():
+    core.init_schema()
+    cases.seed()
+
+СТАЛО:
+def _init():
+    core.init_schema()
+    support.init()
+    cases.seed()
+
+(support там уже импортирован: "from . import betting, cases, ... support, updates")
+Если не добавите — ничего страшного: таблицы создадутся сами при первом открытии поддержки.
+
+Больше править app.py / core.py / requirements.txt не нужно
+(библиотека requests у вас уже есть в requirements.txt).

@@ -1,0 +1,23 @@
+/* ===== Поддержка: ИИ + фото. ДОБАВЬТЕ В КОНЕЦ web/extra.css (вставьте как есть) ===== */
+.sup-msg.ai { align-self: flex-start; background: rgba(0, 200, 160, .12); border-color: rgba(0, 200, 160, .4); border-bottom-left-radius: 5px; }
+.sup-msg.ai .sup-who { color: #3ee0b8; }
+.sup-sys { align-self: center; max-width: 92%; text-align: center; font-size: 12px; color: var(--muted); background: var(--surface-2); border: 1px dashed var(--line-2); border-radius: 12px; padding: 6px 10px; }
+.sup-mode { font-size: 12.5px; font-weight: 700; padding: 7px 10px; border-radius: 10px; margin-bottom: 8px; background: var(--surface-2); border: 1px solid var(--line); }
+.sup-mode.ai { color: #3ee0b8; border-color: rgba(0, 200, 160, .4); }
+.sup-mode.human { color: var(--gold); border-color: rgba(255, 190, 60, .4); }
+.sup-human { width: 100%; margin-top: 4px; }
+.sup-img { display: block; max-width: 100%; max-height: 220px; border-radius: 10px; margin: 3px 0 5px; cursor: zoom-in; background: var(--surface); min-width: 90px; min-height: 60px; object-fit: cover; }
+.sup-gone { display: block; font-size: 12px; color: var(--muted); padding: 6px 0; }
+.sup-form .row { align-items: stretch; }
+.sup-form .row .sup-attach { flex: none; width: 52px; font-size: 20px; padding: 0; }
+.sup-form .row .sup-attach.on { border-color: var(--primary-2); background: rgba(124, 92, 255, .25); }
+.sup-preview { position: relative; align-self: flex-start; }
+.sup-preview img { display: block; max-height: 96px; max-width: 160px; border-radius: 10px; border: 1px solid var(--line-2); }
+.sup-x { position: absolute; top: -8px; right: -8px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: #FF4D6A; color: #fff; font-size: 12px; line-height: 22px; padding: 0; }
+.sup-zoom { position: fixed; inset: 0; z-index: 9999; background: rgba(0, 0, 0, .92); display: flex; align-items: center; justify-content: center; padding: 12px; }
+.sup-zoom img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+.dots { display: flex; gap: 5px; padding: 6px 2px 8px; }
+.dots i { width: 7px; height: 7px; border-radius: 50%; background: #3ee0b8; opacity: .35; animation: supdot 1s infinite; }
+.dots i:nth-child(2) { animation-delay: .15s; } .dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes supdot { 0%, 100% { opacity: .25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-3px); } }
+html.lite .dots i { animation: none; opacity: .8; }
