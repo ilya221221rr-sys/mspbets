@@ -82,6 +82,7 @@ def config(request: Request):
         "coin": {"mult": COIN_MULT, "rtp": round(COIN_MULT * 50, 2)},
         "dice": {"rtp": DICE_EDGE * 100},
         "mines": {"rtp": 97},
+        "blackjack": {"rtp": 99.3, "blackjack_pay": "3:2", "decks": 6},
         "max_bet": MAX_BET,
     }
 

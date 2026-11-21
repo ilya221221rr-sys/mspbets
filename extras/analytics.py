@@ -299,7 +299,12 @@ def _ai_analysis(ev, ctx, probs):
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "Данные матча (JSON):\n" + json.dumps(ctx, ensure_ascii=False)},
     ]
-    text = support.ai_complete(msgs, temperature=0.4, max_tokens=900, reasoning="none")
+    def _valid(t):  # ответ без нормального JSON с причинами -> ai_complete попробует следующую модель
+        d0 = _extract_json(t)
+        if not isinstance(d0, dict) or not d0.get("reasons"):
+            raise ValueError("no reasons")
+
+    text = support.ai_complete(msgs, temperature=0.4, max_tokens=900, reasoning="none", validate=_valid)
     try:
         d = _extract_json(text)
     except Exception:

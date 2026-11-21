@@ -65,7 +65,7 @@ with TestClient(A.app) as c:
 
     print("\n== кейсы")
     cs = u.get("/api/v2/cases").json()["cases"]
-    check("9 кейсов (6 своих + 3 Dota 2)", len(cs) == 9, [x["name"] for x in cs])
+    check("11 кейсов (6 своих + 3 Dota 2 + 2 CS2)", len(cs) == 11, [x["name"] for x in cs])
     for cs_ in cs:
         tot = sum(i["weight"] for i in cs_["items"]); rtp = sum(i["weight"] * i["price"] for i in cs_["items"]) / tot / cs_["price"] * 100
         check(f"RTP «{cs_['name']}» {rtp:.2f}% в 90–95, на экране {cs_['rtp']}%", 90 <= rtp <= 95.01 and abs(rtp - cs_["rtp"]) < 0.01)
@@ -226,7 +226,7 @@ with TestClient(A.app) as c:
     cu = U(c, 400, "Краш1"); cu.get("/api/v2/me")
     check("без раунда: состояние idle", cu.get("/api/v2/crash/state").json()["phase"] == "idle")
     check("кэшаут без раунда нельзя", cu.post("/api/v2/crash/cashout").status_code == 400)
-    check("в фоне нет живого движка краша", not hasattr(crash, "engine") and not any(r.path.startswith("/ws/") for r in A.app.routes))
+    check("в фоне нет живого движка краша", not hasattr(crash, "engine") and not any(getattr(r, "path", "").startswith("/ws/") for r in A.app.routes))
     real_cfs = crash.crash_from_seed
     try:
         crash.crash_from_seed = lambda seed: 5.0

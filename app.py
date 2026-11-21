@@ -875,31 +875,12 @@ def activate_promo(request: Request):
     return {"ok": True, "message": f"+{promo[0]} баллов!"}
 
 # --- НОВОСТИ DOTA 2 ---
-_news_cache = {"ts": 0.0, "data": []}
-
-
 @app.get("/api/dota-news")
 def get_dota_news(request: Request):
     current_user(request)
-    # RSS качаем не чаще раза в 10 минут (раньше — на каждый заход, и это тормозило весь сервер)
-    if _news_cache["data"] and time.monotonic() - _news_cache["ts"] < 600:
-        return _news_cache["data"]
-    rss_url = "https://dota2.ru/news/rss/"
-    try:
-        feed = feedparser.parse(rss_url, request_headers={"User-Agent": "Mozilla/5.0 mspbets"})
-        news_list = []
-        for entry in feed.entries[:10]:
-            news_list.append({
-                "title": entry.get("title", "Без названия"),
-                "link": entry.get("link", ""),
-                "published": entry.get("published", ""),
-                "summary": entry.get("summary", "")[:150] + "..."
-            })
-        if news_list:
-            _news_cache.update(ts=time.monotonic(), data=news_list)
-        return news_list or _news_cache["data"]
-    except Exception:
-        return _news_cache["data"]
+    # Цепочка источников с запасными (RSS dota2.ru сейчас отдаёт 500 → страница dota2.ru/news → Steam), кэш 10 минут.
+    # Подробности — в extras/dotanews.py
+    return extras.dotanews.get_news()
 
 @app.get("/api/news-detail")
 def get_news_detail(url: str, request: Request):

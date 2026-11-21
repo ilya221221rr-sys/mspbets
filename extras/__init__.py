@@ -11,7 +11,7 @@ extras — новые возможности MSPBETS (игры, кейсы, кр
 import asyncio
 import logging
 
-from . import analytics, betting, cases, core, crash, feed, games, newsreader, social, support, updates  # noqa: F401
+from . import analytics, betting, blackjack, cases, core, crash, dotanews, feed, games, newsreader, social, support, updates  # noqa: F401
 
 log = logging.getLogger("mspbets.extras")
 _tasks = []
@@ -24,7 +24,7 @@ def setup(get_db, validate, bot, admin_ids, webapp_url, bot_username):
 
 
 def register(app):
-    for r in (cases.router, games.router, crash.router, social.router, feed.router, updates.router, support.router, analytics.router):
+    for r in (cases.router, games.router, crash.router, blackjack.router, social.router, feed.router, updates.router, support.router, analytics.router):
         app.include_router(r)
 
 
@@ -44,6 +44,7 @@ def _refund_nards():
 
 def _init():
     core.init_schema()
+    blackjack.init()
     cases.seed()
     _refund_nards()
     crash.recover()

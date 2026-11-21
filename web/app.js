@@ -478,9 +478,10 @@
       state.news = news;
       el.innerHTML = news.map((n, i) => `
         <button type="button" class="news-card" data-action="news-open" data-idx="${i}">
+          ${n.image ? `<img class="news-thumb" src="${esc(n.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
           <div class="news-title">${esc(stripHtml(n.title))}</div>
-          <div class="news-date">${esc(n.published)}</div>
-          <div class="news-sum">${esc(stripHtml(n.summary))}</div>
+          <div class="news-date">${esc(fmtNewsDate(n.published))}${n.source ? ' · ' + esc(n.source) : ''}</div>
+          ${n.summary ? `<div class="news-sum">${esc(stripHtml(n.summary))}</div>` : ''}
         </button>`).join('');
     } catch (e) { el.innerHTML = `<div class="empty">Ошибка: ${esc(e.message)}</div>`; }
   }
@@ -713,7 +714,7 @@
   // ---------- Навигация ----------
   async function showTab(name) {
     $$('.panel').forEach((p) => p.classList.toggle('hidden', p.id !== name));
-    const PARENT = { slots: 'games', crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', support: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', 'news-article': 'profile', rating: 'profile' };
+    const PARENT = { slots: 'games', crash: 'games', mines: 'games', plinko: 'games', dice: 'games', wheel: 'games', coin: 'games', blackjack: 'games', ledger: 'profile', achievements: 'profile', referral: 'profile', support: 'profile', social: 'profile', player: 'profile', history: 'profile', news: 'profile', 'news-article': 'profile', rating: 'profile' };
     $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === (PARENT[name] || name)));
     if (window.MSP && MSP.leave) MSP.leave(name);
     window.scrollTo({ top: 0 });

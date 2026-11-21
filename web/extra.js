@@ -95,6 +95,7 @@
       <button class="hub-card" data-tab="plinko" style="--hc:#B26BFF"><span class="hub-ico">🔮</span><span class="hub-name">Plinko</span><span class="hub-sub">До x1000 · RTP 96%</span></button>
       <button class="hub-card" data-tab="dice" style="--hc:#2EE59D"><span class="hub-ico">🎲</span><span class="hub-name">Dice</span><span class="hub-sub">Свой шанс · RTP 97%</span></button>
       <button class="hub-card" data-tab="wheel" style="--hc:#FFC93C"><span class="hub-ico">🎡</span><span class="hub-name">Колесо</span><span class="hub-sub">До x10 · RTP 95.8%</span></button>
+      <button class="hub-card wide" data-tab="blackjack" style="--hc:#2EE59D"><span class="hub-ico">🃏</span><span class="hub-name">Блэкджек</span><span class="hub-sub">Набери 21 · блэкджек 3:2 · RTP ≈ 99%</span></button>
       <button class="hub-card" data-tab="coin" style="--hc:#FFA43C"><span class="hub-ico">🪙</span><span class="hub-name">Монетка</span><span class="hub-sub">x1.94 · RTP 97%</span></button>
     </div>
     <div class="muted-note" style="margin-top:14px">Только виртуальные баллы. Каждая ставка записывается в журнал операций и даёт XP.</div>`);

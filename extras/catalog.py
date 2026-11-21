@@ -156,7 +156,69 @@ DOTA_CASES = [
     ),
 ]
 
-ALL_CASES = CASES + DOTA_CASES
+# --------------------------------------------------------------------------
+# CS2: кейсы с НАСТОЯЩИМИ популярными скинами (картинки — иконки Steam, лежат в web/cs2/).
+# usd — примерная цена на Торговой площадке Steam (снимок на момент добавления, Field-Tested/Factory New);
+# в PTS: usd * rate (для CS2 1 $ = 100 PTS, т.к. скины заметно дороже предметов Dota 2).
+# Веса подбираются под заданный RTP, шанс на экране == реальному. Чтобы обновить цены — поменяйте usd.
+# Картинка предмета: web/cs2/<img>.webp
+# --------------------------------------------------------------------------
+CS2_RATE = 100
+
+CS2_CASES = [
+    dict(
+        key="cs2_popular", name="CS2: Популярные скины", price=5000, rtp=0.92, hue=210, real=True,
+        rate=CS2_RATE, dir="cs2", image="/web/cases/cs2_popular.webp",
+        desc="Самые популярные скины CS2: AK-47 Redline, AWP Asiimov, M4A1-S Hyper Beast, Vulcan и другие.",
+        items=[
+            ("AK-47 | Slate", 6.10, "ak47_slate"),
+            ("AWP | Atheris", 6.51, "awp_atheris"),
+            ("AK-47 | Frontside Misty", 21.68, "ak47_frontside_misty"),
+            ("Glock-18 | Water Elemental", 25.50, "glock18_water_elemental"),
+            ("AK-47 | Redline", 43.56, "ak47_redline"),
+            ("AWP | Chromatic Aberration", 46.69, "awp_chromatic_aberration"),
+            ("AWP | Hyper Beast", 47.51, "awp_hyper_beast"),
+            ("M4A4 | Neo-Noir", 49.34, "m4a4_neo_noir"),
+            ("Desert Eagle | Printstream", 52.48, "deagle_printstream"),
+            ("AK-47 | Asiimov", 57.57, "ak47_asiimov"),
+            ("AWP | Neo-Noir", 57.17, "awp_neo_noir"),
+            ("AK-47 | Neon Rider", 63.98, "ak47_neon_rider"),
+            ("USP-S | Orion", 72.10, "usps_orion"),
+            ("M4A4 | The Emperor", 80.52, "m4a4_the_emperor"),
+            ("USP-S | Kill Confirmed", 99.51, "usps_kill_confirmed"),
+            ("M4A1-S | Hyper Beast", 154.47, "m4a1s_hyper_beast"),
+            ("AWP | Asiimov", 161.78, "awp_asiimov"),
+            ("M4A1-S | Printstream", 274.80, "m4a1s_printstream"),
+            ("AK-47 | Vulcan", 277.79, "ak47_vulcan"),
+        ],
+    ),
+    dict(
+        key="cs2_legend", name="CS2: Ножи и легенды", price=40000, rtp=0.94, hue=28, real=True,
+        rate=CS2_RATE, dir="cs2", image="/web/cases/cs2_legend.webp",
+        desc="Топовые скины CS2: Karambit Doppler, Butterfly Fade, AK-47 Fire Serpent, Wild Lotus и перчатки.",
+        items=[
+            ("M4A1-S | Hyper Beast", 154.47, "m4a1s_hyper_beast"),
+            ("AWP | Asiimov", 161.78, "awp_asiimov"),
+            ("M4A1-S | Cyrex", 238.38, "m4a1s_cyrex"),
+            ("MP9 | Hot Rod", 270.36, "mp9_hot_rod"),
+            ("AK-47 | Vulcan", 277.79, "ak47_vulcan"),
+            ("AK-47 | Case Hardened", 293.90, "ak47_case_hardened"),
+            ("SSG 08 | Dragonfire", 307.47, "ssg08_dragonfire"),
+            ("★ Sport Gloves | Vice", 634.10, "sport_gloves_vice"),
+            ("AWP | Lightning Strike", 663.01, "awp_lightning_strike"),
+            ("Desert Eagle | Blaze", 1030.14, "deagle_blaze"),
+            ("AK-47 | Fire Serpent", 1209.11, "ak47_fire_serpent"),
+            ("★ M9 Bayonet | Doppler", 1385.15, "m9_bayonet_doppler"),
+            ("★ Karambit | Tiger Tooth", 1427.82, "karambit_tiger_tooth"),
+            ("★ Karambit | Doppler", 1700.24, "karambit_doppler"),
+            ("★ Butterfly Knife | Fade", 1810.19, "butterfly_fade"),
+            ("AK-47 | Wild Lotus", 1848.11, "ak47_wild_lotus"),
+            ("★ Karambit | Fade", 1874.11, "karambit_fade"),
+        ],
+    ),
+]
+
+ALL_CASES = CASES + DOTA_CASES + CS2_CASES
 
 
 def rarity_for(price, case_price):
@@ -188,8 +250,9 @@ def rarity_abs(price):
 def item_prices(case):
     out = []
     if case.get("real"):
+        rate = case.get("rate", DOTA_RATE)
         for _, usd, _ in case["items"]:
-            p = usd * DOTA_RATE
+            p = usd * rate
             step = 10 if p < 100000 else 100
             out.append(max(1, int(round(p / step) * step)))
         return out
@@ -236,7 +299,7 @@ def build():
             if case.get("real"):
                 name, _usd, img = raw
                 items.append(dict(name=name, icon="", price=price, weight=w, rarity=rarity_abs(price),
-                                  slug=f"c{ci}_{i}", image=f"/web/dota/{img}.webp"))
+                                  slug=f"c{ci}_{i}", image=f"/web/{case.get('dir', 'dota')}/{img}.webp"))
             else:
                 name, icon, _mult = raw
                 items.append(dict(name=name, icon=icon, price=price, weight=w,

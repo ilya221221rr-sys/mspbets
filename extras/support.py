@@ -39,6 +39,9 @@ extras/support.py — поддержка: СНАЧАЛА отвечает ИИ-�
   AI_BASE_URL  OpenAI-совместимый адрес, по умолчанию https://generativelanguage.googleapis.com/v1beta/openai
   AI_MODEL     по умолчанию gemini-2.5-flash
   AI_VISION    1 — отправлять фото ИИ (по умолчанию 1; поставьте 0, если модель не понимает картинки)
+  AI_VISION_MODEL      модель, которая понимает фото (для OpenRouter необязательно — подберётся бесплатная из каталога)
+  AI_FALLBACK_MODELS   запасные модели через запятую (если основная упала / лимит / пустой ответ)
+  AI_MAX_TRIES         сколько моделей перебирать за один запрос (по умолчанию 5)
   AI_ENABLED   0 — принудительно выключить ИИ (всё сразу идёт человеку)
 """
 import asyncio
@@ -73,6 +76,13 @@ AI_URL = os.getenv("AI_BASE_URL", "https://generativelanguage.googleapis.com/v1b
 AI_MODEL = os.getenv("AI_MODEL", "gemini-2.5-flash").strip()
 AI_VISION = os.getenv("AI_VISION", "1") != "0"
 AI_ENABLED = bool(AI_KEY) and os.getenv("AI_ENABLED", "1") != "0"
+IS_OR = "openrouter.ai" in AI_URL
+# Модель с поддержкой картинок (если основная модель текстовая). Для OpenRouter необязательна: подберётся сама.
+AI_VISION_MODEL = os.getenv("AI_VISION_MODEL", "").strip()
+# Запасные модели через запятую: если основная вернула ошибку/лимит/пустой ответ — пробуем следующую.
+AI_FALLBACK_MODELS = [m.strip() for m in os.getenv("AI_FALLBACK_MODELS", "").split(",") if m.strip()]
+AI_MAX_TRIES = max(1, int(os.getenv("AI_MAX_TRIES", "5")))
+AI_REFERER = os.getenv("AI_REFERER", "").strip()
 
 HUMAN_MARK = "[[HUMAN]]"
 # Игрок просит человека словами — не тратим запрос к ИИ, сразу зовём админа.
@@ -94,7 +104,7 @@ SYSTEM_PROMPT = """Ты — ИИ-помощник поддержки Telegram Mi
 • Выкуп ставки: История → карточка ставки → «Выкупить за N PTS», пока матч не начался.
 • Матчи подгружаются автоматически на ближайшие 48 часов (футбол, NBA, NHL, Dota 2 / CS2 при наличии), расчёт — автоматически
   по итоговому счёту; отменённый/перенесённый матч = возврат ставки. Расчёт может занять некоторое время после матча.
-• Игры на баллы: Краш, Мины, Plinko, Dice, Колесо, Монетка. Кейсы (в т.ч. Dota 2), инвентарь, апгрейдер, продажа скинов.
+• Игры на баллы: Краш, Мины, Plinko, Dice, Колесо, Монетка, Блэкджек. Кейсы (в т.ч. Dota 2), инвентарь, апгрейдер, продажа скинов.
   Слоты — только демо, баллы не тратятся и не начисляются.
 • Ежедневный бонус (заход в приложение раз в день, серия 7 дней), задания, достижения, уровни/XP, VIP с 20 уровня,
   недельные турниры (призы автоматически топ-3), рейтинг, публичные профили, копирование ставок.
@@ -442,76 +452,227 @@ def _history(conn, tid, limit=14):
 
 
 def _build_messages(rows, image, system=None):
+    """image — фото, которое видит ИИ. Оно прикрепляется к ПОСЛЕДНЕМУ сообщению игрока, у которого есть файл
+    (так при уточняющем вопросе без нового фото ИИ по-прежнему «видит» картинку из диалога)."""
     msgs = [{"role": "system", "content": system or SYSTEM_PROMPT}]
-    last_user = max((i for i, r in enumerate(rows) if r[0] == "user"), default=-1)
+    use_img = bool(image and AI_VISION)
+    img_idx = max((i for i, r in enumerate(rows) if r[0] == "user" and r[2]), default=-1) if use_img else -1
     for i, (sender, text, fid) in enumerate(rows):
         if sender == "system":
             continue
         role = "user" if sender == "user" else "assistant"
         text = text or ""
-        if fid and not (i == last_user and image and AI_VISION):
-            text = (text + " [игрок приложил фото]").strip()
-        if i == last_user and image and AI_VISION:
+        if i == img_idx and use_img and role == "user":
             mime, raw = image
             msgs.append({"role": "user", "content": [
-                {"type": "text", "text": text or "Игрок приложил фото без текста."},
+                {"type": "text", "text": text or "Игрок приложил фото без текста. Опиши, что на нём, и помоги."},
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(raw).decode()}"}},
             ]})
-        else:
-            msgs.append({"role": role, "content": text or "…"})
+            continue
+        if fid:
+            text = (text + " [игрок приложил фото]").strip()
+        msgs.append({"role": role, "content": text or "…"})
     return msgs
 
 
 LAST_AI_ERROR = ""  # последняя ошибка ИИ — видна админу в /aitest и в уведомлении об эскалации
 
 
+LAST_AI_MODEL = ""  # какая модель ответила в последний раз (видно в /aitest)
+
+
+class _Skip(Exception):
+    """Эта модель не подошла (ошибка/лимит/пустой ответ) — пробуем следующую."""
+
+
+# Предпочтительные бесплатные модели OpenRouter (если их нет в живом каталоге — просто пропускаются).
+_OR_PREFER_TEXT = ("google/gemma-4-31b-it:free", "openai/gpt-oss-120b:free", "google/gemma-4-26b-a4b-it:free",
+                   "qwen/qwen3-next-80b-a3b-instruct:free", "meta-llama/llama-3.3-70b-instruct:free", "openrouter/free")
+_OR_PREFER_VISION = ("google/gemma-4-31b-it:free", "google/gemma-4-26b-a4b-it:free", "nvidia/nemotron-3.5-super-vl:free",
+                     "qwen/qwen3.8-27b:free", "nvidia/nemotron-nano-12b-v2-vl:free", "openrouter/free")
+_OR_BAD = re.compile(r"safety|guard|lyria|embed|audio|image-gen|tts", re.I)
+_or_cache = {"ts": 0.0, "text": [], "vision": []}
+_or_lock = threading.Lock()
+
+
+def _or_free_models():
+    """Живой каталог бесплатных моделей OpenRouter (бесплатные модели часто пропадают/появляются, поэтому не хардкодим).
+    -> (текстовые, с_картинками). Кэш на час; при ошибке — прошлый список или статический минимум."""
+    import time
+    import requests
+
+    with _or_lock:
+        if _or_cache["text"] and time.time() - _or_cache["ts"] < 3600:
+            return _or_cache["text"], _or_cache["vision"]
+    text, vision = [], []
+    try:
+        r = requests.get(f"{AI_URL}/models", timeout=15)
+        r.raise_for_status()
+        rows = []
+        for m in r.json().get("data", []):
+            mid = m.get("id", "")
+            pr = m.get("pricing") or {}
+            arch = m.get("architecture") or {}
+            if not (mid.endswith(":free") or (str(pr.get("prompt")) == "0" and str(pr.get("completion")) == "0")):
+                continue
+            if _OR_BAD.search(mid) or "text" not in (arch.get("output_modalities") or ["text"]) \
+                    or (arch.get("output_modalities") or ["text"]) != ["text"]:
+                continue
+            rows.append((mid, "image" in (arch.get("input_modalities") or []), int(m.get("context_length") or 0)))
+        rows.sort(key=lambda x: -x[2])
+        ids = [x[0] for x in rows]
+        vids = [x[0] for x in rows if x[1]]
+
+        def order(pref, pool):
+            head = [p for p in pref if p in pool and p != "openrouter/free"]
+            tail = [x for x in pool if x not in head and x != "openrouter/free"]
+            return head + tail + (["openrouter/free"] if "openrouter/free" in pool else [])
+
+        text, vision = order(_OR_PREFER_TEXT, ids), order(_OR_PREFER_VISION, vids)
+    except Exception as e:
+        log.warning("openrouter models list failed: %s", e)
+    with _or_lock:
+        if text:
+            _or_cache.update(ts=time.time(), text=text, vision=vision)
+        elif _or_cache["text"]:
+            _or_cache["ts"] = time.time() - 3000  # повторим через ~10 минут
+        else:
+            _or_cache.update(ts=time.time() - 3300, text=list(_OR_PREFER_TEXT), vision=list(_OR_PREFER_VISION))
+        return _or_cache["text"], _or_cache["vision"]
+
+
+def _has_image(messages):
+    return any(isinstance(m.get("content"), list) and any(p.get("type") == "image_url" for p in m["content"]) for m in messages)
+
+
+def _candidates(vision):
+    """Порядок моделей для запроса: основная -> запасные из окружения -> бесплатные из каталога OpenRouter."""
+    c = []
+    if vision:
+        if AI_VISION_MODEL:
+            c.append(AI_VISION_MODEL)
+        elif not IS_OR:
+            c.append(AI_MODEL)  # Gemini и т.п. — модель уже мультимодальная
+    else:
+        c.append(AI_MODEL)
+    c += AI_FALLBACK_MODELS
+    if IS_OR:
+        text_ids, vision_ids = _or_free_models()
+        if vision and not AI_VISION_MODEL and AI_MODEL in vision_ids:
+            c.insert(0, AI_MODEL)  # основная модель сама понимает картинки
+        c += (vision_ids if vision else text_ids)
+    out = []
+    for m in c:
+        if m and m not in out:
+            out.append(m)
+    return out[:AI_MAX_TRIES]
+
+
 def _ai_request(payload):
     import requests
 
+    vision = _has_image(payload.get("messages", []))
+
+    headers = {"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"}
+    if IS_OR:  # рекомендуемые OpenRouter заголовки (атрибуция приложения)
+        headers["HTTP-Referer"] = AI_REFERER or core.ctx.webapp_url or "https://mspbets.onrender.com"
+        headers["X-Title"] = "MSPBETS"
     try:
-        return requests.post(
-            f"{AI_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"},
-            json=payload, timeout=40,
-        )
+        return requests.post(f"{AI_URL}/chat/completions", headers=headers, json=payload, timeout=70 if vision else 45)
     except Exception as e:
-        raise AIError(f"network: {e}")
+        raise _Skip(f"network: {e}")
 
 
-def ai_complete(messages, temperature=0.3, max_tokens=1500, reasoning="none"):
-    """Общий запрос к OpenAI-совместимому API (с повторами). -> текст ответа. Бросает AIError.
-    Используется поддержкой, режимом «Голда» и ИИ-аналитикой матчей (extras/analytics.py)."""
-    global LAST_AI_ERROR
+def _merge_system(messages):
+    """Некоторые модели (Gemma и др.) не принимают роль system — вклеиваем её в первое сообщение игрока."""
+    sys_txt = "\n\n".join(m["content"] for m in messages if m.get("role") == "system" and isinstance(m.get("content"), str))
+    rest = [dict(m) for m in messages if m.get("role") != "system"]
+    if not sys_txt:
+        return rest
+    for m in rest:
+        if m.get("role") == "user":
+            if isinstance(m["content"], list):
+                m["content"] = [{"type": "text", "text": sys_txt + "\n\n---\n"}] + m["content"]
+            else:
+                m["content"] = sys_txt + "\n\n---\n" + (m["content"] or "")
+            return rest
+    return [{"role": "user", "content": sys_txt}] + rest
+
+
+def _content_text(c):
+    if isinstance(c, list):
+        c = "".join(p.get("text", "") for p in c if isinstance(p, dict))
+    return (c or "").strip()
+
+
+def _try_model(model, messages, temperature, max_tokens, reasoning, vision, validate):
     import time
 
-    if not AI_KEY:
-        raise AIError("AI_API_KEY не задан")
-    payload = {"model": AI_MODEL, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
-    if "googleapis" in AI_URL and AI_MODEL.startswith("gemini-2.5") and reasoning:
+    payload = {"model": model, "messages": messages, "temperature": temperature,
+               "max_tokens": max(max_tokens, 2000) if IS_OR else max_tokens}  # запас на «размышления» reasoning-моделей
+    if "googleapis" in AI_URL and model.startswith("gemini-2.5") and reasoning:
         payload["reasoning_effort"] = reasoning  # none — быстрые ответы без «размышлений» (только модели 2.5)
+    merged = False
     r = None
     for attempt in range(3):
         r = _ai_request(payload)
         if r.status_code == 200:
             break
-        if r.status_code == 400 and "reasoning_effort" in payload:
-            payload.pop("reasoning_effort", None)  # модель не поддерживает параметр — пробуем без него
+        body = r.text[:300]
+        if r.status_code == 400:
+            if "reasoning_effort" in payload:
+                payload.pop("reasoning_effort", None)  # модель не поддерживает параметр — пробуем без него
+                continue
+            if not merged and re.search(r"instruction|system|developer|role", body, re.I):
+                payload["messages"] = _merge_system(messages)
+                merged = True
+                continue
+        if r.status_code in (429, 500, 502, 503, 504) and attempt < (0 if IS_OR else 2):
+            time.sleep(2 * (attempt + 1))  # Gemini и т.п.: лимит/перегрузка — короткий повтор. OpenRouter: сразу другая модель
             continue
-        if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-            time.sleep(2 * (attempt + 1))  # лимит/перегрузка — короткий повтор
-            continue
-        break
-    if r.status_code != 200:
-        LAST_AI_ERROR = f"HTTP {r.status_code}: {r.text[:300]}"
-        raise AIError(LAST_AI_ERROR)
+        raise _Skip(f"HTTP {r.status_code}: {body}")
     try:
         data = r.json()
         if isinstance(data, list):  # Gemini иногда отдаёт ошибку/ответ списком
             data = data[0]
-        return (data["choices"][0]["message"]["content"] or "").strip()
+        if isinstance(data, dict) and data.get("error"):  # OpenRouter: ошибка провайдера внутри HTTP 200
+            raise _Skip(f"provider error: {str(data['error'])[:200]}")
+        text = _content_text(data["choices"][0]["message"].get("content"))
+    except _Skip:
+        raise
     except Exception as e:
-        LAST_AI_ERROR = f"bad response: {e}; {r.text[:200]}"
-        raise AIError(LAST_AI_ERROR)
+        raise _Skip(f"bad response: {e}; {r.text[:160]}")
+    if not text:
+        raise _Skip("empty answer (модель потратила лимит токенов на размышления или ничего не вернула)")
+    if validate:
+        try:
+            validate(text)
+        except Exception as e:
+            raise _Skip(f"invalid answer: {str(e)[:100]}; {text[:100]!r}")
+    return text
+
+
+def ai_complete(messages, temperature=0.3, max_tokens=1500, reasoning="none", validate=None):
+    """Общий запрос к OpenAI-совместимому API. -> текст ответа. Бросает AIError.
+    Используется поддержкой, режимом «Голда» и ИИ-аналитикой матчей (extras/analytics.py).
+    Перебирает модели (см. _candidates): ошибка / лимит / пустой ответ / фото не поддерживается -> следующая модель.
+    validate(text) — необязательная проверка ответа (бросает исключение, если ответ не годится)."""
+    global LAST_AI_ERROR, LAST_AI_MODEL
+    if not AI_KEY:
+        raise AIError("AI_API_KEY не задан")
+    vision = _has_image(messages)
+    errors = []
+    for model in _candidates(vision):
+        try:
+            text = _try_model(model, messages, temperature, max_tokens, reasoning, vision, validate)
+        except _Skip as e:
+            errors.append(f"{model}: {e}")
+            log.info("ai model skipped: %s: %s", model, e)
+            continue
+        LAST_AI_MODEL = model
+        return text
+    LAST_AI_ERROR = ("; ".join(errors) or "нет доступных моделей")[:700]
+    raise AIError(LAST_AI_ERROR)
 
 
 def ai_answer(rows, image=None, golda=False):
@@ -534,6 +695,9 @@ def ai_answer(rows, image=None, golda=False):
     return text[:GOLDA_TEXT_MAX if golda else TEXT_MAX * 2], need_human
 
 
+_TEST_PNG = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAK0lEQVR4nO3NQQEAAATAQGTQP5kwSvC7BdjldMdn9XoHAAAAAAAAAAAAhy3gIwFE6inHLwAAAABJRU5ErkJggg=="
+
+
 def ai_diagnose():
     """Проверка настроек ИИ для админа: -> строка с результатом."""
     lines = [
@@ -542,15 +706,25 @@ def ai_diagnose():
         f"AI_BASE_URL: {AI_URL}",
         f"AI_MODEL: {AI_MODEL}",
         f"AI_VISION: {AI_VISION}",
+        f"AI_VISION_MODEL: {AI_VISION_MODEL or ('авто (бесплатные из каталога OpenRouter)' if IS_OR else '— (используется AI_MODEL)')}",
+        f"Порядок моделей (текст): {', '.join(_candidates(False))}",
+        f"Порядок моделей (фото): {', '.join(_candidates(True))}",
     ]
     if not AI_KEY:
         lines.append("❌ Переменная AI_API_KEY не видна приложению. Проверьте имя (ровно AI_API_KEY) и сервис в Render.")
         return "\n".join(lines)
     try:
         ans, _ = ai_answer([("user", "Как сделать ставку? Ответь в одном предложении.", None)])
-        lines.append(f"✅ ИИ отвечает: {ans[:200]}")
+        lines.append(f"✅ ИИ отвечает ({LAST_AI_MODEL}): {ans[:200]}")
     except AIError as e:
         lines.append(f"❌ Ошибка запроса к ИИ: {e}")
+    if AI_VISION:
+        try:  # проверка «зрения»: красный квадрат 16x16
+            red = base64.b64decode(_TEST_PNG)
+            ans, _ = ai_answer([("user", "Какого цвета квадрат на картинке? Ответь одним словом.", 1)], ("image/png", red))
+            lines.append(f"✅ Фото видит ({LAST_AI_MODEL}): {ans[:80]}")
+        except AIError as e:
+            lines.append(f"❌ Фото не прошло: {e}")
     return "\n".join(lines)
 
 
@@ -645,6 +819,11 @@ def process_user_message(user, text, image=None):
     try:
         with db() as conn:
             rows = _history(conn, tid, GOLDA_HISTORY if golda else 14)
+            if image is None and AI_VISION:
+                # уточняющий вопрос без нового фото: ИИ должен по-прежнему «видеть» последнюю картинку из диалога
+                last_fid = next((r[2] for r in reversed(rows) if r[0] == "user" and r[2]), None)
+                if last_fid:
+                    image = _load_file(conn, last_fid)
         if golda and golda_on and text and not GOLDA_RE.sub("", text).strip(" ,.!?-—:;") and not image:
             # игрок написал только кодовое слово — приветствие без запроса к ИИ
             answer, need_human = GOLDA_ON_REPLY, False
