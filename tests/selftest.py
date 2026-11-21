@@ -73,7 +73,7 @@ with TestClient(A.app) as c:
     print("\n== Dota 2: кейсы с настоящими предметами")
     dc = [x for x in cs if x["name"].startswith("Dota 2:")]
     check("3 Dota-кейса", len(dc) == 3, [x["name"] for x in dc])
-    check("у кейсов и предметов есть существующие картинки", all(os.path.exists(x["image_url"].lstrip("/")) and all(os.path.exists(i["image_url"].lstrip("/")) for i in x["items"]) for x in dc))
+    check("у кейсов и предметов есть существующие картинки", all(os.path.exists(x["image_url"].split("?")[0].lstrip("/")) and all(os.path.exists(i["image_url"].split("?")[0].lstrip("/")) for i in x["items"]) for x in dc))
     arc = next(x for x in dc if "Арканы" in x["name"]); names = {i["name"] for i in arc["items"]}
     check("в кейсе Арканы есть Manifold Paradox, Demon Eater, Bladeform Legacy", {"Manifold Paradox", "Demon Eater", "Bladeform Legacy"} <= names)
     check("в кейсе Бессмертные есть Dragonclaw Hook", any(i["name"] == "Dragonclaw Hook" for x in dc for i in x["items"]))

@@ -127,7 +127,7 @@ with TestClient(A.app) as c:
     for x in cs2:
         check(f"{x['name']}: RTP {x['rtp']}% в диапазоне 90–95", 90 <= x["rtp"] <= 95.5)
         check(f"{x['name']}: сумма шансов 100%", abs(sum(i["chance"] for i in x["items"]) - 100) < 0.01)
-        check(f"{x['name']}: картинки на месте", all(os.path.exists(os.path.join(ROOT, i["image_url"].lstrip("/"))) for i in x["items"]) and os.path.exists(os.path.join(ROOT, x["image_url"].lstrip("/"))))
+        check(f"{x['name']}: картинки на месте", all(os.path.exists(os.path.join(ROOT, i["image_url"].split("?")[0].lstrip("/"))) for i in x["items"]) and os.path.exists(os.path.join(ROOT, x["image_url"].split("?")[0].lstrip("/"))))
     check("есть AK-47 | Redline и Karambit", any(i["name"] == "AK-47 | Redline" for i in cs2[0]["items"]) and any("Karambit" in i["name"] for x in cs2 for i in x["items"]))
     conn = core.ctx.get_db(); conn.execute("update users set balance=1000000 where user_id=200"); conn.commit(); conn.close()
     r = me.post("/api/v2/cases/open", {"case_id": cs2[0]["id"]})

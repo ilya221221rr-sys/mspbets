@@ -11,6 +11,17 @@
   const $ = (id) => document.getElementById(id);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
   const main = document.querySelector('main.main');
+  // Если картинка скина/кейса не загрузилась: одна повторная попытка без кэша, затем заглушка
+  const PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80"><rect width="120" height="80" rx="10" fill="#1b2230"/>' +
+    '<path d="M18 52l22-22 14 14 10-10 38 38H18z" fill="#2c3750"/><circle cx="86" cy="24" r="7" fill="#3a4766"/></svg>');
+  document.addEventListener('error', (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'IMG' || !/\/web\/(cs2|cases|skins|dota)\//.test(t.src)) return;
+    if (!t.dataset.retry) { t.dataset.retry = '1'; t.src = t.src.split('#')[0] + (t.src.includes('?') ? '&' : '?') + 'r=' + Date.now(); return; }
+    if (t.src !== PLACEHOLDER) t.src = PLACEHOLDER;
+  }, true);
+
   const anchor = $('history');
 
   function panel(id, html) {

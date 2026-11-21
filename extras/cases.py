@@ -26,6 +26,16 @@ _cache = {"ts": 0, "data": None}
 DESC = {c["name"]: c["desc"] for c in CATALOG_CASES}
 
 
+IMG_VER = "2"  # меняйте, чтобы сбросить у игроков закэшированные картинки
+
+
+def _v(url):
+    """Для картинок CS2 добавляем ?v= — так клиенты забывают ранее закэшированный 404."""
+    if url and url.startswith(("/web/cs2/", "/web/cases/cs2")) and "?" not in url:
+        return f"{url}?v={IMG_VER}"
+    return url
+
+
 def seed():
     """Засев каталога. Идемпотентно: можно вызывать при каждом старте.
     При ПЕРВОМ запуске старые кейсы (Dota) скрываются (active=0), данные игроков не удаляются."""
@@ -36,7 +46,7 @@ def seed():
         if not any(c["name"] in existing for c in cat):
             conn.execute("UPDATE cases SET active=0")
         for c in cat:
-            img = c.get("image") or f"/web/cases/{c['slug']}.svg"
+            img = _v(c.get("image") or f"/web/cases/{c['slug']}.svg")
             if c["name"] in existing:
                 cid = existing[c["name"]]
                 conn.execute("UPDATE cases SET price=?, image_url=?, active=1 WHERE id=?", (c["price"], img, cid))
@@ -45,7 +55,7 @@ def seed():
                     "INSERT INTO cases (name, price, image_url, active) VALUES (?,?,?,1)", (c["name"], c["price"], img)
                 ).lastrowid
             for it in c["items"]:
-                simg = it.get("image") or f"/web/skins/{it['slug']}.svg"
+                simg = _v(it.get("image") or f"/web/skins/{it['slug']}.svg")
                 row = one(conn, "SELECT id FROM skins WHERE case_id=? AND name=?", (cid, it["name"]))
                 if row:
                     conn.execute(

@@ -392,8 +392,10 @@ async def static_cache(request: Request, call_next):
     resp = await call_next(request)
     p = request.url.path
     if p.startswith("/web/"):
-        if p.endswith((".svg", ".png", ".jpg", ".webp", ".woff2")):
-            resp.headers["Cache-Control"] = "public, max-age=604800, immutable"  # картинки скинов/кейсов
+        if resp.status_code >= 400:
+            resp.headers["Cache-Control"] = "no-store"  # 404 нельзя кэшировать, иначе картинка «пропадёт» на неделю
+        elif p.endswith((".svg", ".png", ".jpg", ".webp", ".woff2")):
+            resp.headers["Cache-Control"] = "public, max-age=604800"  # картинки скинов/кейсов
         else:  # js/css: браузер проверяет ETag (304 без загрузки, если не менялось)
             resp.headers["Cache-Control"] = "no-cache"
     elif p.startswith("/api/"):
