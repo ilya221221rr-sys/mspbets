@@ -1,0 +1,373 @@
+diff --git a/UPDATE_GUIDE.md b/UPDATE_GUIDE.md
+index 9b6f0d1..1c87712 100644
+--- a/UPDATE_GUIDE.md
++++ b/UPDATE_GUIDE.md
+@@ -32,6 +32,10 @@
+ | `FEED_LEAGUES` | все | список путей ESPN через запятую, напр. `soccer/eng.1,basketball/nba` |
+ | `FEED_BROADCAST` | `0` | `1` — рассылать всем игрокам дайджест новых матчей |
+ | `PANDASCORE_TOKEN` | пусто | токен pandascore.co (бесплатный) — включает Dota 2 и CS2 |
++| `ESPORTS_MARGIN` | `0.07` | маржа БК в киберспорте (7%, как у BetBoom/Winline) |
++| `ESPORTS_HISTORY_PAGES` | `6` | сколько страниц по 100 прошлых матчей берём для рейтинга команд |
++| `ESPORTS_MIN_ODDS` / `ESPORTS_MAX_ODDS` | `1.04` / `12.0` | границы линии |
++| `ESPORTS_SPREAD` | `1.0` | «жёсткость» линии: больше → фавориты короче, аутсайдеры длиннее |
+ 
+ `BOT_USERNAME` уже есть в вашем `render.yaml` — он используется для реферальной ссылки.
+ Бот работает на **одном воркере** (как и сейчас: `uvicorn app:app`) — это важно для Краша.
+@@ -374,3 +378,11 @@ RTP 92% / 94%, шансы считаются из весов как у оста
+ Обложки: `python tools/gen_cs2_covers.py`.
+ 
+ Тесты: `python tests/new_selftest.py`, `python tests/or_selftest.py`, `python tests/ai_selftest.py`, `python tests/selftest.py`.
++
++
++## Реалистичные кэфы киберспорта (Dota 2 / CS2)
++
++Кэфы считает `extras/esports_odds.py`: Эло по картам (учёт счёта серии, силы турнира и давности),
++сжатие рейтинга для команд с малой выборкой, формат серии bo1/bo3/bo5, ничья (X) в bo2,
++маржа ~7% степенным методом (аутсайдер «теряет» больше фаворита, как в реальных линиях).
++Проверка: `python tests/esports_selftest.py`.
+diff --git a/extras/__pycache__/__init__.cpython-311.pyc b/extras/__pycache__/__init__.cpython-311.pyc
+new file mode 100644
+index 0000000..26a400e
+Binary files /dev/null and b/extras/__pycache__/__init__.cpython-311.pyc differ
+diff --git a/extras/__pycache__/analytics.cpython-311.pyc b/extras/__pycache__/analytics.cpython-311.pyc
+new file mode 100644
+index 0000000..c9b375b
+Binary files /dev/null and b/extras/__pycache__/analytics.cpython-311.pyc differ
+diff --git a/extras/__pycache__/esports_odds.cpython-311.pyc b/extras/__pycache__/esports_odds.cpython-311.pyc
+new file mode 100644
+index 0000000..8d3377a
+Binary files /dev/null and b/extras/__pycache__/esports_odds.cpython-311.pyc differ
+diff --git a/extras/__pycache__/feed.cpython-311.pyc b/extras/__pycache__/feed.cpython-311.pyc
+new file mode 100644
+index 0000000..dfeac62
+Binary files /dev/null and b/extras/__pycache__/feed.cpython-311.pyc differ
+diff --git a/extras/esports_odds.py b/extras/esports_odds.py
+new file mode 100644
+index 0000000..fda4854
+--- /dev/null
++++ b/extras/esports_odds.py
+@@ -0,0 +1,158 @@
++"""
++extras/esports_odds.py — «букмекерские» коэффициенты для киберспорта (Dota 2 / CS2).
++
++Бесплатный PandaScore не отдаёт линии БК, поэтому кэфы считаются моделью, которая ведёт себя
++как линия BetBoom / Winline:
++
++  1. Рейтинг Эло на уровне КАРТ (а не серий): учитывается счёт серии (2:0 сильнее, чем 2:1),
++     динамический K-фактор (новые команды быстро «находят» уровень), вес турнира (tier S/A важнее)
++     и затухание по давности матча.
++  2. Рейтинг сжимается к среднему, если у команды мало сыгранных карт (нет «ложных» фаворитов).
++  3. Вероятность карты → вероятность серии с учётом формата bo1 / bo3 / bo5 (фаворит в bo3 имеет
++     более низкий кэф, чем в bo1). Для bo2 появляется исход «Ничья» (X), как у настоящих БК.
++  4. Маржа БК (ESPORTS_MARGIN, по умолчанию 7%) накладывается степенным методом: аутсайдер
++     «теряет» больше, фаворит меньше (favourite-longshot bias) — так делают реальные конторы.
++  5. Границы линии: минимум 1.04, максимум 12.0.
++
++Модуль чистый (без сети и БД): tests/esports_selftest.py.
++"""
++import math
++import os
++from datetime import datetime, timezone
++
++BASE = 1500.0
++MARGIN = float(os.getenv("ESPORTS_MARGIN", "0.07"))
++MIN_ODDS = float(os.getenv("ESPORTS_MIN_ODDS", "1.04"))
++MAX_ODDS = float(os.getenv("ESPORTS_MAX_ODDS", "12.0"))
++SHRINK_MAPS = float(os.getenv("ESPORTS_SHRINK_MAPS", "8"))      # доверие к рейтингу: n / (n + SHRINK_MAPS)
++HALF_LIFE_DAYS = float(os.getenv("ESPORTS_HALF_LIFE_DAYS", "75"))  # через столько дней вес матча падает вдвое
++SPREAD = float(os.getenv("ESPORTS_SPREAD", "1.0"))               # >1 — кэфы «жёстче», фавориты сильнее
++
++TIER_WEIGHT = {"s": 1.25, "a": 1.1, "b": 1.0, "c": 0.85, "d": 0.7}
++
++
++# ------------------------------- вероятности -------------------------------
++def map_prob(ra, rb):
++    """Вероятность выигрыша карты командой A по Эло."""
++    return 1.0 / (1.0 + 10 ** (-(ra - rb) * SPREAD / 400.0))
++
++
++def series_prob(p, best_of):
++    """Вероятность выиграть серию bo{best_of}, если на каждой карте шанс p."""
++    p = min(0.995, max(0.005, p))
++    n = max(1, int(best_of or 1))
++    if n % 2 == 0:
++        n -= 1
++    need = n // 2 + 1
++    q = 1 - p
++    return sum(math.comb(need - 1 + lost, lost) * p ** need * q ** lost for lost in range(need))
++
++
++def three_way(p):
++    """bo2: (победа A 2:0, ничья 1:1, победа B 0:2)."""
++    p = min(0.995, max(0.005, p))
++    return p * p, 2 * p * (1 - p), (1 - p) ** 2
++
++
++# ------------------------------- маржа -------------------------------
++def apply_margin(probs, margin=None):
++    """
++    Справедливые вероятности → кэфы с маржой БК (степенной метод):
++    ищем k<1, при котором сумма p_i^k = 1 + маржа; кэф = 1 / p_i^k.
++    """
++    m = MARGIN if margin is None else margin
++    s = sum(probs)
++    probs = [min(0.999, max(0.001, p / s)) for p in probs]
++    lo, hi = 0.2, 1.0
++    for _ in range(60):
++        k = (lo + hi) / 2
++        if sum(p ** k for p in probs) > 1 + m:
++            lo = k
++        else:
++            hi = k
++    k = (lo + hi) / 2
++    return [round(min(MAX_ODDS, max(MIN_ODDS, 1.0 / (p ** k))), 2) for p in probs]
++
++
++# ------------------------------- рейтинги -------------------------------
++def _parse_dt(s):
++    try:
++        return datetime.fromisoformat(str(s).replace("Z", "+00:00")).astimezone(timezone.utc)
++    except Exception:
++        return None
++
++
++def _scores(m, ids):
++    """Счёт серии {team_id: карт выиграно}. Нет results — берём winner_id как 1:0."""
++    res = {r.get("team_id"): r.get("score") for r in (m.get("results") or []) if r.get("team_id") in ids}
++    if len(res) == 2 and all(isinstance(v, int) for v in res.values()) and sum(res.values()) > 0:
++        return res
++    w = m.get("winner_id")
++    if w in ids:
++        return {i: (1 if i == w else 0) for i in ids}
++    return None
++
++
++def build_ratings(past, now=None):
++    """past — завершённые матчи PandaScore. Возвращает ({team_id: рейтинг}, {team_id: сыграно карт})."""
++    now = now or datetime.now(timezone.utc)
++    rating, games, rows = {}, {}, []
++    for m in past:
++        if m.get("forfeit"):
++            continue
++        ids = [o["opponent"]["id"] for o in (m.get("opponents") or []) if o.get("opponent")]
++        if len(ids) != 2 or ids[0] == ids[1]:
++            continue
++        sc = _scores(m, ids)
++        if not sc:
++            continue
++        t = _parse_dt(m.get("end_at") or m.get("begin_at") or m.get("scheduled_at")) or now
++        rows.append((t, m, ids, sc))
++    rows.sort(key=lambda x: x[0])
++    for t, m, ids, sc in rows:
++        a, b = ids
++        age = max(0.0, (now - t).total_seconds() / 86400.0)
++        tier = str(((m.get("tournament") or {}).get("tier") or "")).lower()
++        w = TIER_WEIGHT.get(tier, 0.9) * (0.35 + 0.65 * 0.5 ** (age / HALF_LIFE_DAYS))
++        ia, ib = sc[a], sc[b]
++        seq = []  # чередуем карты, чтобы порядок не влиял на результат
++        while ia or ib:
++            if ia:
++                seq.append(a); ia -= 1
++            if ib:
++                seq.append(b); ib -= 1
++        for winner in seq:
++            ra, rb = rating.get(a, BASE), rating.get(b, BASE)
++            ga, gb = games.get(a, 0), games.get(b, 0)
++            ea = map_prob(ra, rb)
++            sa = 1.0 if winner == a else 0.0
++            ka = (14 + 46 / (1 + ga / 10.0)) * w  # новичок K≈60, ветеран K≈14
++            kb = (14 + 46 / (1 + gb / 10.0)) * w
++            rating[a] = ra + ka * (sa - ea)
++            rating[b] = rb + kb * ((1 - sa) - (1 - ea))
++            games[a], games[b] = ga + 1, gb + 1
++    return rating, games
++
++
++def effective(rating, games, team_id):
++    """Рейтинг с поправкой на малую выборку."""
++    n = games.get(team_id, 0)
++    return BASE + (rating.get(team_id, BASE) - BASE) * (n / (n + SHRINK_MAPS))
++
++
++# ------------------------------- кэфы матча -------------------------------
++def match_odds(rating, games, id_a, id_b, best_of=3, margin=None):
++    """(odds_1, odds_x | None, odds_2). best_of=2 → рынок с ничьёй."""
++    pm = map_prob(effective(rating, games, id_a), effective(rating, games, id_b))
++    if int(best_of or 3) == 2:
++        o1, ox, o2 = apply_margin(list(three_way(pm)), margin)
++        return o1, ox, o2
++    ps = series_prob(pm, best_of or 3)
++    o1, o2 = apply_margin([ps, 1 - ps], margin)
++    return o1, None, o2
++
++
++def best_of_of(m):
++    """Формат серии из матча PandaScore (по умолчанию bo3)."""
++    n = m.get("number_of_games")
++    return n if isinstance(n, int) and 1 <= n <= 7 else 3
+diff --git a/extras/feed.py b/extras/feed.py
+index 8523d8f..aac5317 100644
+--- a/extras/feed.py
++++ b/extras/feed.py
+@@ -6,7 +6,8 @@ extras/feed.py — автоматическая загрузка матчей и
+      Берём РЫНОЧНЫЕ линии (moneyline DraftKings), переводим в десятичные кэфы, убираем
+      маржу источника и накладываем собственную (FEED_MARGIN, по умолчанию 6%).
+   2) PandaScore (опционально, нужен PANDASCORE_TOKEN): Dota 2 и CS2. Бесплатный тариф не отдаёт
+-     линии букмекеров, поэтому кэфы считаются по рейтингу Эло, собранному из последних матчей.
++     линии букмекеров, поэтому кэфы считает модель из extras/esports_odds.py (Эло по картам, формат
++     bo1/bo3/bo5, ничья в bo2, маржа ESPORTS_MARGIN ≈ 7% как у BetBoom / Winline).
+ 
+ Что делает:
+   * каждые FEED_SYNC_MINUTES добавляет новые матчи (ближайшие FEED_WINDOW_HOURS часов, по умолчанию 48) и обновляет кэфы
+@@ -25,7 +26,7 @@ from datetime import datetime, timedelta, timezone
+ import requests
+ from fastapi import APIRouter, HTTPException, Request
+ 
+-from . import betting, core
++from . import betting, core, esports_odds
+ from .core import all_, auth, db, one
+ 
+ log = logging.getLogger("mspbets.feed")
+@@ -41,6 +42,9 @@ PER_LEAGUE = int(os.getenv("FEED_PER_LEAGUE", "12"))
+ MAX_OPEN = int(os.getenv("FEED_MAX_OPEN", "100"))
+ BROADCAST = os.getenv("FEED_BROADCAST", "0") in ("1", "true", "True")
+ PANDA_TOKEN = os.getenv("PANDASCORE_TOKEN", "")
++PANDA_PAGES = max(1, min(10, int(os.getenv("ESPORTS_HISTORY_PAGES", "6"))))  # по 100 матчей истории на игру
++RATING_TTL = 50 * 60  # рейтинги пересчитываем не чаще раза в ~50 минут (экономим лимит PandaScore)
++_rating_cache = {}
+ ESPN = "https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard"
+ 
+ # (путь ESPN, вид спорта в приложении, лига, есть ли ничья)
+@@ -173,37 +177,33 @@ def _panda(path, params=None):
+ 
+ 
+ def elo_ratings(game):
+-    past = _panda(f"/{game}/matches/past", {"per_page": 100, "sort": "-begin_at", "filter[status]": "finished"})
+-    rating = {}
+-    for m in reversed(past):
+-        opp = [o["opponent"]["id"] for o in m.get("opponents", []) if o.get("opponent")]
+-        w = m.get("winner_id")
+-        if len(opp) != 2 or w not in opp:
+-            continue
+-        a, b = opp
+-        ra, rb = rating.get(a, 1500), rating.get(b, 1500)
+-        ea = 1 / (1 + 10 ** ((rb - ra) / 400))
+-        sa = 1.0 if w == a else 0.0
+-        rating[a] = ra + 24 * (sa - ea)
+-        rating[b] = rb + 24 * ((1 - sa) - (1 - ea))
+-    return rating
++    """Рейтинги команд (по картам) из последних PANDA_PAGES*100 завершённых матчей. Кэшируется."""
++    hit = _rating_cache.get(game)
++    if hit and time.time() - hit[0] < RATING_TTL:
++        return hit[1]
++    past = []
++    for page in range(1, PANDA_PAGES + 1):
++        chunk = _panda(f"/{game}/matches/past", {"per_page": 100, "page": page, "sort": "-begin_at", "filter[status]": "finished"})
++        past.extend(chunk)
++        if len(chunk) < 100:
++            break
++    res = esports_odds.build_ratings(past)
++    _rating_cache[game] = (time.time(), res)
++    return res
+ 
+ 
+ def panda_matches(game, label):
+-    rating = elo_ratings(game)
++    rating, games = elo_ratings(game)
+     out = []
+-    for m in _panda(f"/{game}/matches/upcoming", {"per_page": 25, "sort": "begin_at"}):
++    for m in _panda(f"/{game}/matches/upcoming", {"per_page": 50, "sort": "begin_at"}):
+         opp = [o["opponent"] for o in m.get("opponents", []) if o.get("opponent")]
+         if len(opp) != 2 or not m.get("begin_at"):
+             continue
+-        ra, rb = rating.get(opp[0]["id"], 1500), rating.get(opp[1]["id"], 1500)
+-        pa = 1 / (1 + 10 ** ((rb - ra) / 400))
+-        pa = min(0.9, max(0.1, pa))
+-        o1, o2 = with_margin([1 / pa, 1 / (1 - pa)])
++        o1, ox, o2 = esports_odds.match_odds(rating, games, opp[0]["id"], opp[1]["id"], esports_odds.best_of_of(m))
+         out.append({
+             "id": f"ps:{game}:{m['id']}", "home": opp[0]["name"], "away": opp[1]["name"],
+             "start": datetime.fromisoformat(m["begin_at"].replace("Z", "+00:00")).astimezone(timezone.utc),
+-            "odds": (o1, None, o2), "sport": label, "league": ((m.get("league") or {}).get("name") or label),
++            "odds": (o1, ox, o2), "sport": label, "league": ((m.get("league") or {}).get("name") or label),
+             "path": f"panda/{game}",
+         })
+     return out
+@@ -336,9 +336,13 @@ def settle_finished():
+                         result = "void"
+             elif source == "panda":
+                 m = _panda(f"/matches/{ext.rsplit(':', 1)[-1]}")
+-                if m.get("status") == "finished" and m.get("winner_id"):
+-                    opp = [o["opponent"]["id"] for o in m.get("opponents", [])]
++                opp = [o["opponent"]["id"] for o in m.get("opponents", []) if o.get("opponent")]
++                if m.get("status") == "finished" and m.get("winner_id") and len(opp) == 2:
+                     result = "1" if m["winner_id"] == opp[0] else "2"
++                elif m.get("status") == "finished" and len(opp) == 2 and not m.get("winner_id"):
++                    sc = {r.get("team_id"): r.get("score") for r in (m.get("results") or [])}
++                    if sc.get(opp[0]) is not None and sc.get(opp[0]) == sc.get(opp[1]) and (m.get("draw") or m.get("number_of_games") == 2):
++                        result = "X"  # ничья в bo2 (1:1)
+                 elif m.get("status") in ("canceled", "postponed"):
+                     result = "void"
+             if result is None and now - start > timedelta(days=5):
+diff --git a/tests/esports_selftest.py b/tests/esports_selftest.py
+new file mode 100644
+index 0000000..7eadd69
+--- /dev/null
++++ b/tests/esports_selftest.py
+@@ -0,0 +1,56 @@
++"""Проверка модели кэфов киберспорта: python tests/esports_selftest.py (без сети и БД)."""
++import importlib.util
++import pathlib
++import random
++
++p = pathlib.Path(__file__).resolve().parents[1] / "extras" / "esports_odds.py"
++sp = importlib.util.spec_from_file_location("esports_odds", p)
++eo = importlib.util.module_from_spec(sp)
++sp.loader.exec_module(eo)
++
++ok = True
++
++
++def check(name, cond):
++    global ok
++    print(("✅" if cond else "❌"), name)
++    ok = ok and cond
++
++
++def book(odds):
++    return sum(1 / o for o in odds if o)
++
++
++# равные команды
++o = eo.match_odds({}, {}, 1, 2, 3)
++check("равные команды bo3 ≈ 1.85–1.92", 1.85 <= o[0] == o[2] <= 1.92)
++# маржа 5–9%
++for bo in (1, 3, 5):
++    r = {1: 1580, 2: 1500}; g = {1: 80, 2: 80}
++    m = book(eo.match_odds(r, g, 1, 2, bo)) - 1
++    check(f"маржа bo{bo} 5–9% ({m:.1%})", 0.05 <= m <= 0.09)
++# фаворит в bo3 короче, чем в bo1
++r = {1: 1600, 2: 1500}; g = {1: 80, 2: 80}
++check("фаворит в bo3 дешевле, чем в bo1", eo.match_odds(r, g, 1, 2, 3)[0] < eo.match_odds(r, g, 1, 2, 1)[0])
++# bo2 → ничья
++o = eo.match_odds({}, {}, 1, 2, 2)
++check("bo2 даёт X", o[1] is not None and 1.7 < o[1] < 2.3)
++# границы
++o = eo.match_odds({1: 2400, 2: 800}, {1: 99, 2: 99}, 1, 2, 5)
++check("границы 1.04..12", o[0] >= 1.04 and o[2] <= 12.0)
++# неизвестная команда не становится фаворитом
++o = eo.match_odds({1: 1800}, {1: 2}, 1, 2, 3)
++check("новичок с 2 картами не фаворит 1.1", o[0] > 1.5)
++# рейтинги из истории: сильная команда должна получить низкий кэф
++random.seed(1)
++past = []
++for i in range(120):
++    a_win = random.random() < 0.8
++    past.append({"opponents": [{"opponent": {"id": 1}}, {"opponent": {"id": 2}}], "winner_id": 1 if a_win else 2,
++                 "results": [{"team_id": 1, "score": 2 if a_win else 1}, {"team_id": 2, "score": 1 if a_win else 2}],
++                 "end_at": f"2026-01-{1 + i % 28:02d}T12:00:00Z", "tournament": {"tier": "a"}})
++rt, gm = eo.build_ratings(past)
++o = eo.match_odds(rt, gm, 1, 2, 3)
++check(f"по истории фаворит короче аутсайдера {o}", o[0] < 1.5 < 2.0 < o[2])
++print("ОК" if ok else "ЕСТЬ ОШИБКИ")
++raise SystemExit(0 if ok else 1)

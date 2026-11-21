@@ -6,7 +6,8 @@ extras/feed.py — автоматическая загрузка матчей и
      Берём РЫНОЧНЫЕ линии (moneyline DraftKings), переводим в десятичные кэфы, убираем
      маржу источника и накладываем собственную (FEED_MARGIN, по умолчанию 6%).
   2) PandaScore (опционально, нужен PANDASCORE_TOKEN): Dota 2 и CS2. Бесплатный тариф не отдаёт
-     линии букмекеров, поэтому кэфы считаются по рейтингу Эло, собранному из последних матчей.
+     линии букмекеров, поэтому кэфы считает модель из extras/esports_odds.py (Эло по картам, формат
+     bo1/bo3/bo5, ничья в bo2, маржа ESPORTS_MARGIN ≈ 7% как у BetBoom / Winline).
 
 Что делает:
   * каждые FEED_SYNC_MINUTES добавляет новые матчи (ближайшие FEED_WINDOW_HOURS часов, по умолчанию 48) и обновляет кэфы
@@ -25,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 from fastapi import APIRouter, HTTPException, Request
 
-from . import betting, core
+from . import betting, core, esports_odds
 from .core import all_, auth, db, one
 
 log = logging.getLogger("mspbets.feed")
@@ -41,6 +42,9 @@ PER_LEAGUE = int(os.getenv("FEED_PER_LEAGUE", "12"))
 MAX_OPEN = int(os.getenv("FEED_MAX_OPEN", "100"))
 BROADCAST = os.getenv("FEED_BROADCAST", "0") in ("1", "true", "True")
 PANDA_TOKEN = os.getenv("PANDASCORE_TOKEN", "")
+PANDA_PAGES = max(1, min(10, int(os.getenv("ESPORTS_HISTORY_PAGES", "6"))))  # по 100 матчей истории на игру
+RATING_TTL = 50 * 60  # рейтинги пересчитываем не чаще раза в ~50 минут (экономим лимит PandaScore)
+_rating_cache = {}
 ESPN = "https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard"
 
 # (путь ESPN, вид спорта в приложении, лига, есть ли ничья)
@@ -173,37 +177,33 @@ def _panda(path, params=None):
 
 
 def elo_ratings(game):
-    past = _panda(f"/{game}/matches/past", {"per_page": 100, "sort": "-begin_at", "filter[status]": "finished"})
-    rating = {}
-    for m in reversed(past):
-        opp = [o["opponent"]["id"] for o in m.get("opponents", []) if o.get("opponent")]
-        w = m.get("winner_id")
-        if len(opp) != 2 or w not in opp:
-            continue
-        a, b = opp
-        ra, rb = rating.get(a, 1500), rating.get(b, 1500)
-        ea = 1 / (1 + 10 ** ((rb - ra) / 400))
-        sa = 1.0 if w == a else 0.0
-        rating[a] = ra + 24 * (sa - ea)
-        rating[b] = rb + 24 * ((1 - sa) - (1 - ea))
-    return rating
+    """Рейтинги команд (по картам) из последних PANDA_PAGES*100 завершённых матчей. Кэшируется."""
+    hit = _rating_cache.get(game)
+    if hit and time.time() - hit[0] < RATING_TTL:
+        return hit[1]
+    past = []
+    for page in range(1, PANDA_PAGES + 1):
+        chunk = _panda(f"/{game}/matches/past", {"per_page": 100, "page": page, "sort": "-begin_at", "filter[status]": "finished"})
+        past.extend(chunk)
+        if len(chunk) < 100:
+            break
+    res = esports_odds.build_ratings(past)
+    _rating_cache[game] = (time.time(), res)
+    return res
 
 
 def panda_matches(game, label):
-    rating = elo_ratings(game)
+    rating, games = elo_ratings(game)
     out = []
-    for m in _panda(f"/{game}/matches/upcoming", {"per_page": 25, "sort": "begin_at"}):
+    for m in _panda(f"/{game}/matches/upcoming", {"per_page": 50, "sort": "begin_at"}):
         opp = [o["opponent"] for o in m.get("opponents", []) if o.get("opponent")]
         if len(opp) != 2 or not m.get("begin_at"):
             continue
-        ra, rb = rating.get(opp[0]["id"], 1500), rating.get(opp[1]["id"], 1500)
-        pa = 1 / (1 + 10 ** ((rb - ra) / 400))
-        pa = min(0.9, max(0.1, pa))
-        o1, o2 = with_margin([1 / pa, 1 / (1 - pa)])
+        o1, ox, o2 = esports_odds.match_odds(rating, games, opp[0]["id"], opp[1]["id"], esports_odds.best_of_of(m))
         out.append({
             "id": f"ps:{game}:{m['id']}", "home": opp[0]["name"], "away": opp[1]["name"],
             "start": datetime.fromisoformat(m["begin_at"].replace("Z", "+00:00")).astimezone(timezone.utc),
-            "odds": (o1, None, o2), "sport": label, "league": ((m.get("league") or {}).get("name") or label),
+            "odds": (o1, ox, o2), "sport": label, "league": ((m.get("league") or {}).get("name") or label),
             "path": f"panda/{game}",
         })
     return out
@@ -336,9 +336,13 @@ def settle_finished():
                         result = "void"
             elif source == "panda":
                 m = _panda(f"/matches/{ext.rsplit(':', 1)[-1]}")
-                if m.get("status") == "finished" and m.get("winner_id"):
-                    opp = [o["opponent"]["id"] for o in m.get("opponents", [])]
+                opp = [o["opponent"]["id"] for o in m.get("opponents", []) if o.get("opponent")]
+                if m.get("status") == "finished" and m.get("winner_id") and len(opp) == 2:
                     result = "1" if m["winner_id"] == opp[0] else "2"
+                elif m.get("status") == "finished" and len(opp) == 2 and not m.get("winner_id"):
+                    sc = {r.get("team_id"): r.get("score") for r in (m.get("results") or [])}
+                    if sc.get(opp[0]) is not None and sc.get(opp[0]) == sc.get(opp[1]) and (m.get("draw") or m.get("number_of_games") == 2):
+                        result = "X"  # ничья в bo2 (1:1)
                 elif m.get("status") in ("canceled", "postponed"):
                     result = "void"
             if result is None and now - start > timedelta(days=5):
