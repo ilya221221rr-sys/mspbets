@@ -22,7 +22,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from anyio import from_thread
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Update, WebAppInfo, MenuButtonWebApp, Message
+from aiogram.types import Update, WebAppInfo, MenuButtonWebApp, Message, CallbackQuery
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
@@ -353,8 +353,18 @@ async def cmd_support_close(message: Message): await extras.support.bot_close_cm
 @dp.message(Command("tickets"))
 async def cmd_support_tickets(message: Message): await extras.support.bot_tickets_cmd(message)
 
+@dp.message(Command("human"))
+async def cmd_support_human(message: Message): await extras.support.bot_human_cmd(message)
+
+@dp.message(F.photo)
+async def on_photo(message: Message): await extras.support.bot_photo(message)
+
+@dp.callback_query(F.data == "sup_human")
+async def on_support_human_btn(callback: CallbackQuery): await extras.support.bot_human_cb(callback)
+
 @dp.message(F.text & ~F.text.startswith("/"))
 async def on_plain_text(message: Message): await extras.support.bot_text(message)
+
 
 # --- LIFESPAN ---
 @asynccontextmanager
