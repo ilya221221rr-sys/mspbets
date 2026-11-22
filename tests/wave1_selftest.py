@@ -353,19 +353,22 @@ with TestClient(A.app) as c:
     check("награды: бесплатно ур.5 — фрибет 5 000, премиум ур.30 — 250 000", p0["levels"][4]["free"] == {"type": "freebet", "amount": 5000} and p0["levels"][29]["premium"]["amount"] == 250_000)
     check("забрать нечего → 400", g.post("/api/v2/pass/claim").status_code == 400)
     P = [manual_event(f"Пасс {i} — Матч {i}", (1.9, None, 1.9)) for i in range(3)]
-    g.post("/api/predict", {"event_id": P[0], "points": 50_000, "choice": "1"})
-    g.post("/api/predict", {"event_id": P[1], "points": 30_500, "choice": "1"})
+    g.post("/api/predict", {"event_id": P[0], "points": 60_000, "choice": "1"})
+    g.post("/api/predict", {"event_id": P[1], "points": 35_000, "choice": "1"})
     conn = core.ctx.get_db(); core.game_bet(conn, 300, 40_000, "dice"); conn.commit(); conn.close()
     seasonpass._cache.clear()
     p1 = g.get("/api/v2/pass").json()
-    check("80 500 на матчи → 80 очков, 40 000 в играх → 10 очков: уровень 2", p1["points"] == 90 and p1["level"] == 2 and p1["claimable"] == 2, (p1["points"], p1["level"]))
+    check("стоимость уровней: 50 000, 55 000 … 195 000 (всего 3 675 000)", [l["cost"] for l in p1["levels"][:3]] == [50_000, 55_000, 60_000]
+          and p1["levels"][29]["cost"] == 195_000 and p1["levels"][29]["need"] == 3_675_000 and p1["total_need"] == 3_675_000, p1["levels"][:3])
+    check("95 000 на матчи + 40 000 в играх (25% = 10 000) = 105 000 → ровно уровень 2", p1["points"] == 105_000 and p1["level"] == 2 and p1["claimable"] == 2
+          and p1["into_level"] == 0 and p1["level_points"] == 60_000, (p1["points"], p1["level"], p1["into_level"], p1["level_points"]))
     fbp = fb_give(adm, 300, 50_000)
     g.post("/api/v2/freebets/use", {"freebet_id": fbp, "type": "single", "event_id": P[2], "choice": "1"})
     seasonpass._cache.clear()
-    check("ставка фрибетом очков не даёт", g.get("/api/v2/pass").json()["points"] == 90)
+    check("ставка фрибетом прогресс не даёт", g.get("/api/v2/pass").json()["points"] == 105_000)
     sql("INSERT INTO transactions (user_id, amount, balance_after, kind, note, created_at) VALUES (300, -500000, 0, 'bet', 'прошлый месяц', '2000-01-01T00:00:00+00:00')")
     seasonpass._cache.clear()
-    check("ставки прошлых сезонов не считаются", g.get("/api/v2/pass").json()["points"] == 90)
+    check("ставки прошлых сезонов не считаются", g.get("/api/v2/pass").json()["points"] == 105_000)
     sql("DELETE FROM transactions WHERE note='прошлый месяц'")  # тестовая строка ломает порядок дат в журнале
     b0 = g.bal()
     r = g.post("/api/v2/pass/claim")
@@ -376,11 +379,15 @@ with TestClient(A.app) as c:
     check("второй раз купить нельзя", g.post("/api/v2/pass/buy").status_code == 400)
     r = g.post("/api/v2/pass/claim")
     check("после покупки — премиум-награды за пройденные уровни: 3 700 + 4 400", r.json()["pts"] == 8100 and all(x["track"] == "premium" for x in r.json()["rewards"]), r.text)
-    conn = core.ctx.get_db(); core.adjust(conn, 300, -100_000, "bet", "тест: ставки"); conn.commit(); conn.close()
+    conn = core.ctx.get_db(); core.adjust(conn, 300, -124_999, "bet", "тест: ставки"); conn.commit(); conn.close()
+    seasonpass._cache.clear()
+    p3 = g.get("/api/v2/pass").json()
+    check("229 999 PTS — ещё уровень 3 (4-й стоит 65 000, не хватает 1)", p3["level"] == 3 and p3["into_level"] == 64_999 and p3["level_points"] == 65_000, (p3["level"], p3["into_level"]))
+    conn = core.ctx.get_db(); core.adjust(conn, 300, -1, "bet", "тест: ставки"); conn.commit(); conn.close()
     seasonpass._cache.clear()
     r = g.post("/api/v2/pass/claim").json()
     kinds = {(x["level"], x["track"]): x["type"] for x in r["rewards"]}
-    check("ур.3–4 (пропуск 190 очков): премиум ур.3 — фрибет 6 000", r["freebets"] == 6000 and kinds[(3, "premium")] == "freebet" and len(r["rewards"]) == 4, r)
+    check("ур.3–4 (230 000 PTS): премиум ур.3 — фрибет 6 000", r["freebets"] == 6000 and kinds[(3, "premium")] == "freebet" and len(r["rewards"]) == 4, r)
     check("фрибет пропуска в списке, срок 14 дней", any(f["source"] == "pass" and f["amount"] == 6000 for f in g.get("/api/v2/freebets").json()["active"]))
     br = g.get("/api/v2/pass/brief").json()
     check("короткий статус для баннера", br["level"] == 4 and br["premium"] and br["claimable"] == 0, br)
@@ -439,9 +446,31 @@ with TestClient(A.app) as c:
           and b.post("/api/v2/betcards/shared/copy", {"p": p_x, "amount": 100}).status_code == 400)
     check("лента ставок отдаёт event_id событий (для кнопки «Рынки матча»)", any(l.get("event_id") == m2 for x in b.get("/api/v2/betlog/feed").json() for l in x["legs"]))
 
+    print("\n== «Лента ставок игроков»: ставки всех игроков всех видов")
+    betcards._feed_cache.clear()
+    fa = b.get("/api/v2/betcards/feed").json()["bets"]
+    kinds_all = {x["kind"] for x in fa}
+    check("в общей ленте все виды: одинары, экспрессы, рынки, экспрессы+", {"single", "express", "market", "mx"} <= kinds_all, kinds_all)
+    check("в ленте и сыгранные ставки (с результатом), а не только открытые", any(x["status"] in ("won", "lost") for x in fa) and any(x["status"] == "pending" for x in fa))
+    check("у каждой ставки автор: имя, уровень, uid", all(x.get("name") and x.get("level") and x.get("uid") for x in fa))
+    fm = b.get("/api/v2/betcards/feed", params={"f": "markets"}).json()["bets"]
+    check("фильтр «Тоталы, форы, счёт»: только рынки и экспрессы+ с рынками", fm and all(x["kind"] == "market" or (x["kind"] == "mx" and any(l["market"] != "1x2" for l in x["legs"])) for x in fm), {x["kind"] for x in fm})
+    check("в фильтре рынков — тотал Боба на сыгранный матч (3:1)", any(x["kind"] == "market" and x["id"] == mb and x["legs"][0]["score"] == "3:1" for x in fm))
+    check("свои ставки помечены mine (без кнопки «Скопировать»)", any(x["mine"] for x in fm) and all(x["mine"] == (x["uid"] == 200) for x in fm))
+    check("фильтр П1/X/П2 — только одинары", all(x["kind"] == "single" for x in b.get("/api/v2/betcards/feed", params={"f": "single"}).json()["bets"]))
+    check("фильтр экспрессов", all(x["kind"] in ("express", "mx") for x in b.get("/api/v2/betcards/feed", params={"f": "express"}).json()["bets"]))
+    fc = b.get("/api/v2/betcards/feed", params={"f": "copy"}).json()["bets"]
+    check("фильтр «Можно скопировать»: только ставки на несыгранные матчи", fc and all(x["copyable"] for x in fc))
+    sql("UPDATE profiles SET hide_bets=1 WHERE user_id=200")
+    betcards._feed_cache.clear()
+    check("игрок скрыл ставки — их нет в ленте", all(x["uid"] != 200 for x in a.get("/api/v2/betcards/feed", params={"f": "markets"}).json()["bets"]))
+    sql("UPDATE profiles SET hide_bets=0 WHERE user_id=200")
+    betcards._feed_cache.clear()
+    check("неизвестный фильтр → все", a.get("/api/v2/betcards/feed", params={"f": "zzz"}).json()["filter"] == "all")
+
     print("\n== фронтенд")
     js = c.get("/web/wave1.js").text
-    check("wave1.js: история, карточка, фрибеты, пропуск, поделиться", all(x in js for x in ("/api/v2/betcards/history", "/api/v2/freebets/use", "/api/v2/pass/claim", "/api/v2/betcards/share", "/api/v2/betcards/shared")))
+    check("wave1.js: история, карточка, фрибеты, пропуск, поделиться", all(x in js for x in ("/api/v2/betcards/history", "/api/v2/freebets/use", "/api/v2/pass/claim", "/api/v2/betcards/share", "/api/v2/betcards/shared", "/api/v2/betcards/feed")))
     idx = c.get("/").text
     check("index.html подключает wave1.js и wave1.css после plus.js", idx.find("/web/wave1.js") > idx.find("/web/plus.js") > 0 and "/web/wave1.css" in idx)
     check("старые эндпоинты живы", a.get("/api/history").status_code == 200 and a.get("/api/v2/betlog/feed").status_code == 200)

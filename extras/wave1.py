@@ -3,7 +3,7 @@ extras/wave1.py — подключение «первой волны» MSP 3.0:
 
   * accaperks.py  — бонус к экспрессу (+5% … +50%) и страховка экспресса (фрибет, если не зашло одно событие);
   * freebets.py   — фрибеты: ставка без списания баланса, игроку — чистый выигрыш;
-  * seasonpass.py — сезонный пропуск: 30 уровней за ставки месяца, бесплатная и премиум-дорожки;
+  * seasonpass.py — сезонный пропуск: 30 уровней за ставки месяца (1-й — 50 000 PTS, каждый следующий +5 000), бесплатная и премиум-дорожки;
   * betcards.py   — ставки на новые рынки в общей «Истории ставок», карточка ставки, «Поделиться» ссылкой.
 
 Подключается из extras/__init__.py тремя вызовами: wave1.init(), wave1.register(app), wave1.scheduler().
@@ -50,7 +50,7 @@ def summary(request: Request):
         s, pts, lvl, prem, claimed = seasonpass._state(conn, uid)
     return {"rules": accaperks.rules(), "freebets": fbs,
             "pass": {"title": s["title"], "level": lvl, "max_level": seasonpass.MAX_LEVEL, "points": pts["points"],
-                     "level_points": seasonpass.LEVEL_PTS, "premium": prem, "ends_at": s["end"],
+                     "level_points": seasonpass.progress(pts["points"], lvl)[1], "into_level": seasonpass.progress(pts["points"], lvl)[0], "premium": prem, "ends_at": s["end"],
                      "claimable": len(seasonpass._claimable(lvl, prem, claimed))}}
 
 

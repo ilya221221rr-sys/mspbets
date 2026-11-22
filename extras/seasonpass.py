@@ -2,10 +2,11 @@
 extras/seasonpass.py — сезонный пропуск (Battle Pass).
 
   * Сезон = календарный месяц (UTC). 30 уровней, награды на каждом уровне.
-  * Очки пропуска начисляются автоматически за ставки этого сезона:
-      1 очко за каждые SPORT_RATE (1 000) PTS в ставках на матчи (ставки фрибетом не считаются),
-      1 очко за каждые GAME_RATE (4 000) PTS в играх казино.
-    Очки считаются по журналу операций при открытии пропуска (никаких фоновых задач и записей
+  * Прогресс = сумма ставок этого сезона в PTS: ставки на матчи засчитываются полностью
+    (ставки фрибетом не считаются), ставки в играх казино — на 1/GAME_DIV (25%).
+  * Уровень 1 стоит LEVEL_BASE (50 000) PTS ставок, каждый следующий дороже на LEVEL_STEP (5 000):
+    50 000, 55 000, 60 000 … 195 000 за 30-й (всего 3 675 000 PTS за весь пропуск).
+    Прогресс считается по журналу операций при открытии пропуска (никаких фоновых задач и записей
     при каждой ставке — бережём слабый сервер).
   * Бесплатная дорожка — у всех. Премиум-дорожка покупается за PREMIUM_PRICE PTS один раз на сезон;
     награды премиума за уже пройденные уровни можно забрать сразу после покупки.
@@ -25,9 +26,9 @@ log = logging.getLogger("mspbets.seasonpass")
 router = APIRouter(prefix="/api/v2/pass")
 
 MAX_LEVEL = 30
-LEVEL_PTS = int(os.getenv("PASS_LEVEL_POINTS", "40"))
-SPORT_RATE = int(os.getenv("PASS_SPORT_RATE", "1000"))
-GAME_RATE = int(os.getenv("PASS_GAME_RATE", "4000"))
+LEVEL_BASE = int(os.getenv("PASS_LEVEL_BASE", "50000"))  # стоимость 1-го уровня в PTS ставок
+LEVEL_STEP = int(os.getenv("PASS_LEVEL_STEP", "5000"))  # каждый следующий уровень дороже на столько
+GAME_DIV = int(os.getenv("PASS_GAME_DIV", "4"))  # ставки в играх засчитываются на 1/GAME_DIV
 PREMIUM_PRICE = int(os.getenv("PASS_PREMIUM_PRICE", "250000"))
 PASS_FB_DAYS = 14
 MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
@@ -110,15 +111,35 @@ def points(conn, uid, season, fresh=False):
             (uid, season_txid(conn, season), season["start"], season["end"]))
     sport, game, fb = (int(x or 0) for x in r)
     sport = max(0, sport - fb)
-    pts = {"sport": sport, "game": game, "points": sport // SPORT_RATE + game // GAME_RATE}
+    pts = {"sport": sport, "game": game, "points": sport + game // GAME_DIV}
     if len(_cache) > 5000:
         _cache.clear()
     _cache[k] = (time.monotonic(), pts)
     return pts
 
 
+def level_cost(n):
+    """Сколько PTS ставок стоит уровень n (1-й — 50 000, затем +5 000 за каждый)."""
+    return LEVEL_BASE + LEVEL_STEP * (n - 1)
+
+
+def level_need(n):
+    """Сколько PTS ставок нужно всего, чтобы получить уровень n."""
+    return n * LEVEL_BASE + LEVEL_STEP * n * (n - 1) // 2
+
+
 def level_of(p):
-    return min(MAX_LEVEL, p // LEVEL_PTS)
+    lv = 0
+    while lv < MAX_LEVEL and p >= level_need(lv + 1):
+        lv += 1
+    return lv
+
+
+def progress(p, lvl):
+    """(набрано в текущем уровне, стоимость следующего уровня)."""
+    if lvl >= MAX_LEVEL:
+        return level_cost(MAX_LEVEL), level_cost(MAX_LEVEL)
+    return p - level_need(lvl), level_cost(lvl + 1)
 
 
 def _state(conn, uid, fresh=False):
@@ -144,12 +165,14 @@ def get_pass(request: Request):
     uid = int(auth(request)["id"])
     with db() as conn:
         s, pts, lvl, prem, claimed = _state(conn, uid)
-    levels = [{"level": lv, "free": reward(lv, "free"), "premium": reward(lv, "premium"),
+    levels = [{"level": lv, "cost": level_cost(lv), "need": level_need(lv), "free": reward(lv, "free"), "premium": reward(lv, "premium"),
                "free_claimed": (lv, "free") in claimed, "premium_claimed": (lv, "premium") in claimed} for lv in range(1, MAX_LEVEL + 1)]
     p = pts["points"]
+    into, cost = progress(p, lvl)
     return {"season": s["key"], "title": s["title"], "ends_at": s["end"], "points": p, "level": lvl, "max_level": MAX_LEVEL,
-            "level_points": LEVEL_PTS, "into_level": p - lvl * LEVEL_PTS if lvl < MAX_LEVEL else LEVEL_PTS,
-            "sport_wager": pts["sport"], "game_wager": pts["game"], "sport_rate": SPORT_RATE, "game_rate": GAME_RATE,
+            "level_points": cost, "into_level": into, "level_base": LEVEL_BASE, "level_step": LEVEL_STEP,
+            "total_need": level_need(MAX_LEVEL), "game_share": round(100 / GAME_DIV),
+            "sport_wager": pts["sport"], "game_wager": pts["game"],
             "premium": prem, "price": PREMIUM_PRICE, "levels": levels, "claimable": len(_claimable(lvl, prem, claimed)),
             "totals": totals(), "fb_days": PASS_FB_DAYS}
 
@@ -160,7 +183,8 @@ def brief(request: Request):
     uid = int(auth(request)["id"])
     with db() as conn:
         s, pts, lvl, prem, claimed = _state(conn, uid)
-    return {"title": s["title"], "level": lvl, "max_level": MAX_LEVEL, "points": pts["points"], "level_points": LEVEL_PTS,
+    into, cost = progress(pts["points"], lvl)
+    return {"title": s["title"], "level": lvl, "max_level": MAX_LEVEL, "points": pts["points"], "level_points": cost, "into_level": into,
             "premium": prem, "claimable": len(_claimable(lvl, prem, claimed)), "ends_at": s["end"]}
 
 
@@ -206,7 +230,7 @@ def claim(request: Request):
             core.adjust(conn, uid, pts_sum, "pass_reward", f"Сезонный пропуск {s['title']}: награды ({len(got)})", ref=f"pass:{s['key']}")
         bal = core.balance_of(conn, uid)
     if not got and not skipped:
-        raise HTTPException(400, "Пока нечего забирать — набери очки пропуска ставками")
+        raise HTTPException(400, "Пока нечего забирать — делай ставки, чтобы пройти уровень")
     msg = []
     if pts_sum:
         msg.append(f"+{money(pts_sum)} PTS")

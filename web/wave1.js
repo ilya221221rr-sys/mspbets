@@ -451,15 +451,15 @@
     const top = `<div class="gcard w1-pass-top">
         <div class="w1-pass-row"><div><small>Сезон</small><b>${esc(d.title)}</b></div><div class="w1-pass-lv"><small>Уровень</small><b>${d.level}<i>/${d.max_level}</i></b></div><div><small>До конца</small><b>${daysLeft(d.ends_at)}</b></div></div>
         <div class="bar w1-pass-bar"><i style="width:${pct}%"></i></div>
-        <div class="w1-pass-sub">${d.level >= d.max_level ? '🏆 Максимальный уровень!' : `${d.into_level} / ${d.level_points} очков до уровня ${d.level + 1}`} · всего ${fmt(d.points)} очков</div>
-        <div class="muted-note">1 очко = ${fmt(d.sport_rate)} PTS в ставках на матчи или ${fmt(d.game_rate)} PTS в играх. Ставки фрибетом очков не дают. В этом сезоне: матчи ${fmt(d.sport_wager)}, игры ${fmt(d.game_wager)}.</div>
+        <div class="w1-pass-sub">${d.level >= d.max_level ? '🏆 Максимальный уровень!' : `Уровень ${d.level + 1}: ${fmt(d.into_level)} / ${fmt(d.level_points)} PTS ставок`} · за сезон ${fmt(d.points)} PTS</div>
+        <div class="muted-note">Уровень 1 — ${fmt(d.level_base)} PTS ставок, каждый следующий дороже на ${fmt(d.level_step)} (30-й — ${fmt(d.level_base + d.level_step * (d.max_level - 1))}). Ставки на матчи засчитываются полностью, в играх — на ${d.game_share}%, фрибетом — не засчитываются. В этом сезоне: матчи ${fmt(d.sport_wager)}, игры ${fmt(d.game_wager)}.</div>
         ${d.claimable ? `<button class="btn btn-primary btn-block" type="button" data-action="w1-pass-claim">Забрать награды (${d.claimable})</button>` : ''}
         ${d.premium ? '<div class="w1-prem-on">👑 Премиум активен</div>' : `<button class="btn btn-block w1-prem-btn" type="button" data-action="w1-pass-buy" data-price="${d.price}">👑 Премиум за ${fmt(d.price)} PTS<small>ещё ${short(t.premium.pts)} PTS и фрибеты на ${short(t.premium.freebet)} · награды за пройденные уровни сразу</small></button>`}
       </div>`;
     const rows = d.levels.map((l) => {
       const reached = l.level <= d.level;
       const cell = (tr, r, claimed, locked) => `<div class="w1-rw ${tr}${claimed ? ' got' : ''}${locked ? ' locked' : ''}${reached && !claimed && !locked ? ' ready' : ''}">${rw(r)}${claimed ? '<em>✓</em>' : locked ? '<em>🔒</em>' : ''}</div>`;
-      return `<div class="w1-lv${reached ? ' on' : ''}${l.level === d.level + 1 ? ' next' : ''}"><span class="w1-lv-n">${l.level}</span>${cell('free', l.free, l.free_claimed, false)}${cell('prem', l.premium, l.premium_claimed, !d.premium)}</div>`;
+      return `<div class="w1-lv${reached ? ' on' : ''}${l.level === d.level + 1 ? ' next' : ''}"><span class="w1-lv-n">${l.level}<small>${short(l.cost)}</small></span>${cell('free', l.free, l.free_claimed, false)}${cell('prem', l.premium, l.premium_claimed, !d.premium)}</div>`;
     }).join('');
     box.innerHTML = top + `<div class="w1-track-head"><span></span><span>Бесплатно</span><span>👑 Премиум</span></div><div class="w1-track">${rows}</div>
       <div class="muted-note">За сезон: бесплатно ${fmt(t.free.pts)} PTS + фрибеты на ${fmt(t.free.freebet)}; премиум ещё ${fmt(t.premium.pts)} PTS + фрибеты на ${fmt(t.premium.freebet)}. Фрибеты пропуска живут ${d.fb_days} дн.</div>`;
@@ -486,7 +486,7 @@
     const box = $('w1-pass-bonus'), s = W.sum && W.sum.pass;
     if (!box || !s) return;
     const fbN = fbList().length;
-    box.innerHTML = `<button type="button" class="dw-banner w1-pass-banner${s.claimable ? ' ready' : ''}" data-tab="spass"><span class="dw-b-ic">🎟</span><span class="dw-b-t"><b>Сезонный пропуск · ${esc(s.title)}</b><small>${s.claimable ? `Можно забрать наград: ${s.claimable}` : `Уровень ${s.level} из ${s.max_level} · ${s.points % s.level_points}/${s.level_points} очков`}${s.premium ? ' · 👑' : ''}</small></span><span class="dw-b-go">${s.claimable ? 'Забрать' : '→'}</span></button>` +
+    box.innerHTML = `<button type="button" class="dw-banner w1-pass-banner${s.claimable ? ' ready' : ''}" data-tab="spass"><span class="dw-b-ic">🎟</span><span class="dw-b-t"><b>Сезонный пропуск · ${esc(s.title)}</b><small>${s.claimable ? `Можно забрать наград: ${s.claimable}` : (s.level >= s.max_level ? `Уровень ${s.level} из ${s.max_level} · пройден целиком!` : `Уровень ${s.level} из ${s.max_level} · до следующего ${short(s.level_points - s.into_level)} PTS ставок`)}${s.premium ? ' · 👑' : ''}</small></span><span class="dw-b-go">${s.claimable ? 'Забрать' : '→'}</span></button>` +
       (fbN ? `<button type="button" class="dw-banner w1-fb-banner" data-tab="freebets"><span class="dw-b-ic">🎁</span><span class="dw-b-t"><b>Фрибеты: ${fbN}</b><small>На ${fmt(fbList().reduce((a, f) => a + f.amount, 0))} PTS · ближайший сгорит через ${daysLeft(fbList()[0].expires_at)}</small></span><span class="dw-b-go">→</span></button>` : '');
   }
   M.tabs.bonus = ((orig) => async () => { const p = loadSum(true); if (orig) await orig(); await p; passBanner(); })(M.tabs.bonus);
@@ -500,6 +500,29 @@
       if (h) h.insertAdjacentHTML('afterend', html); else menu.insertAdjacentHTML('afterbegin', html);
     }
   })(M.tabs.profile);
+
+  // ==========================================================
+  //  👥 «Лента ставок игроков»: ставки ВСЕХ игроков всех видов (исходы, тоталы, форы, счёт, экспрессы),
+  //  не только те, что ещё можно скопировать. Фильтры — чипами сверху.
+  // ==========================================================
+  const FEED_F = [['all', 'Все'], ['markets', '📊 Тоталы, форы, счёт'], ['single', '🎯 П1 / X / П2'], ['express', '🧩 Экспрессы'], ['copy', '👥 Можно скопировать']];
+  const FD = { f: 'all', seq: 0 };
+  const socialHead = document.querySelector('#social .panel-head p');
+  if (socialHead) socialHead.textContent = 'Ставки всех игроков: исходы, тоталы, форы, точный счёт и экспрессы. Ставки на несыгранные матчи можно скопировать.';
+  async function feedLoad() {
+    const box = $('social-body'); if (!box) return;
+    const my = ++FD.seq;
+    const chips = `<div class="w1-feed-f">${FEED_F.map(([k, t]) => `<button type="button" class="w1-chip${FD.f === k ? ' on' : ''}" data-action="w1-feed-f" data-f="${k}">${t}</button>`).join('')}</div>`;
+    box.innerHTML = chips + loading;
+    try {
+      const [d] = await Promise.all([api('/api/v2/betcards/feed?f=' + FD.f), P.loadAvail()]);
+      if (my !== FD.seq) return;
+      const empty = { markets: 'Ставок на тоталы, форы и точный счёт пока нет', copy: 'Сейчас нет ставок на несыгранные матчи', express: 'Экспрессов пока нет' }[FD.f] || 'Ставок пока нет';
+      box.innerHTML = chips + (d.bets.length ? d.bets.map((b) => P.betCard(b, { who: true, copy: !b.mine, markets: !b.mine })).join('') : `<div class="empty">${empty}</div>`);
+    } catch (e) { if (my === FD.seq) box.innerHTML = chips + `<div class="empty">${esc(e.message)}</div>`; }
+  }
+  M.tabs.social = async () => { navTo('profile'); await feedLoad(); };
+  M.actions['w1-feed-f'] = (el) => { FD.f = el.dataset.f; feedLoad(); };
 
   // ==========================================================
   //  Журнал: подписи для новых видов операций

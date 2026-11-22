@@ -170,6 +170,16 @@ async function open(uid, name, startParam) {
   mkb.click(); await sleep(1000);
   check('по кнопке открылись все рынки этого матча', !$('mk-modal').classList.contains('hidden') && /Lakers/.test($('mk-body').textContent));
   $$('[data-action="mk-close"]')[0].click(); await sleep(200);
+  check('в ленте фильтры: Все / Тоталы, форы, счёт / П1-X-П2 / Экспрессы / Можно скопировать', $$('#social-body .w1-chip').length === 5 && $$('#social-body .w1-chip.on')[0].dataset.f === 'all');
+  const kinds = $$('#social-body .bl-kind').map((x) => x.textContent);
+  check('«Все»: ставки всех игроков всех видов', ['Ординар', 'Экспресс ·', 'Рынок', 'Экспресс+'].every((k) => kinds.some((t) => t.includes(k))) && /Соперник/.test($('social-body').textContent) && /Тест/.test($('social-body').textContent), kinds.join(' | '));
+  $$('#social-body [data-action="w1-feed-f"][data-f="markets"]')[0].click(); await sleep(900);
+  const mk2 = $$('#social-body .bl-kind').map((x) => x.textContent);
+  check('фильтр «Тоталы, форы, счёт»: только рынки и экспрессы+', mk2.length >= 3 && mk2.every((t) => /Рынок|Экспресс\+/.test(t)) && /Тотал/.test($('social-body').textContent), mk2.join(' | '));
+  check('у своих ставок нет «Скопировать», у чужой — есть', $$('#social-body [data-action="bl-copy"]').length === 1);
+  $$('#social-body [data-action="w1-feed-f"][data-f="single"]')[0].click(); await sleep(900);
+  check('фильтр П1/X/П2: только ординары', $$('#social-body .bl-kind').every((x) => /Ординар/.test(x.textContent)) && $$('#social-body .bl-kind').length >= 2);
+  $$('#social-body [data-action="w1-feed-f"][data-f="all"]')[0].click(); await sleep(600);
 
   console.log('\n== ставка по ссылке у друга');
   const shr = await opp.post('/api/v2/betcards/share', { kind: 'market', id: ob.body.id });
@@ -193,14 +203,16 @@ async function open(uid, name, startParam) {
   check('пропуск: 30 уровней, обе дорожки', $$('#w1-pass-body .w1-lv').length === 30 && $$('#w1-pass-body .w1-rw.prem').length === 30);
   const lvl = num(d.querySelector('.w1-pass-lv b').textContent.split('/')[0]);
   check('уровень посчитан по ставкам (≥ 0)', lvl >= 0);
-  sql("INSERT INTO transactions (user_id, amount, balance_after, kind, note, created_at) VALUES (777, -200000, 0, 'bet', 'тест', datetime('now') || '+00:00')");
+  check('цена уровней: 1-й — 50K, 2-й — 55K, 30-й — 195K', /^1\s*50K$/.test(d.querySelector('.w1-lv-n').textContent) && /55K/.test($$('.w1-lv-n')[1].textContent) && /195K/.test($$('.w1-lv-n')[29].textContent), $$('.w1-lv-n').slice(0, 2).map((x) => x.textContent).join(','));
+  check('подпись: «Уровень 1 — 50 000 PTS ставок, каждый следующий дороже на 5 000»', /Уровень 1 — 50\s000 PTS ставок, каждый следующий дороже на 5\s000/.test($('w1-pass-body').textContent));
+  sql("INSERT INTO transactions (user_id, amount, balance_after, kind, note, created_at) VALUES (777, -400000, 0, 'bet', 'тест', datetime('now') || '+00:00')");
   await new Promise((r) => setTimeout(r, 16000)); // кэш очков 15 с
   await tab('spass'); await sleep(800);
   const claim = $$('[data-action="w1-pass-claim"]')[0];
   check('после ставок — «Забрать награды»', !!claim, $('w1-pass-body').textContent.slice(0, 200));
   const b5 = bal();
   claim.click(); await sleep(1500);
-  check('награды забраны: баланс вырос, клетки отмечены ✓', bal() > b5 && $$('#w1-pass-body .w1-rw.free.got').length >= 5, `${b5} → ${bal()}`);
+  check('401 500 PTS ставок → уровень 6, награды забраны (6 клеток ✓)', bal() > b5 && $$('#w1-pass-body .w1-rw.free.got').length === 6 && /^6/.test(d.querySelector('.w1-pass-lv b').textContent), `${b5} → ${bal()} · ${d.querySelector('.w1-pass-lv b').textContent}`);
   $$('[data-action="w1-pass-buy"]')[0].click(); await sleep(300);
   $('dialog-ok').click(); await sleep(1500);
   check('премиум куплен', /Премиум активен/.test($('w1-pass-body').textContent));

@@ -6,6 +6,10 @@ extras/betcards.py — ставки на новые рынки в общей «�
     Старый /api/history (ординары и экспрессы) не меняется — фронт склеивает два списка по времени.
   * POST /api/v2/betcards/share — ссылка «t.me/<бот>?startapp=bet_…» на свою ставку (любой вид).
     Ссылка подписана HMAC: по ней нельзя перебором открыть чужие ставки.
+  * GET  /api/v2/betcards/feed?f=… — «Лента ставок игроков»: последние ставки ВСЕХ игроков всех видов
+    (исходы, тоталы, форы, точный счёт, экспрессы) — и на будущие, и на идущие, и на сыгранные матчи.
+    Фильтры: all | markets (тоталы, форы, счёт…) | single (П1/X/П2) | express | copy (можно скопировать).
+    Кэш 20 с на фильтр — лента не грузит слабый сервер, сколько бы игроков её ни открывали.
   * GET  /api/v2/betcards/shared?p=… — открыть ставку по ссылке (карточка + «Поставить так же»).
   * POST /api/v2/betcards/shared/copy — поставить так же по текущим коэффициентам (даже если автор
     скрыл свои ставки в профиле: он сам поделился ссылкой).
@@ -15,6 +19,7 @@ import hmac
 import html
 import os
 import re
+import time
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
@@ -61,18 +66,27 @@ def _one_bet(conn, kind, bid):
     return None
 
 
-def my_new_bets(conn, uid, limit):
-    """Одинары на доп. рынки + экспрессы+ игрока (формат как в betlog.collect)."""
+def my_new_bets(conn, uid, limit, exclude_hidden=False):
+    """Одинары на доп. рынки + экспрессы+ (формат как в betlog.collect). uid=None — по всем игрокам (лента)."""
     out = []
-    for r in all_(conn, """SELECT p.id, p.event_id, p.market, p.pick, p.label, p.amount, p.odds, p.status, p.payout, p.score, p.created_at,
-                                  e.title, e.status, e.starts_at, e.sport
-                           FROM market_bets p LEFT JOIN events e ON e.id=p.event_id WHERE p.user_id=? ORDER BY p.id DESC LIMIT ?""", (uid, limit)):
-        out.append({"kind": "market", "id": r[0], "amount": r[5], "odds": r[6], "status": r[7], "payout": r[8], "created_at": r[10],
+    who = "AND p.user_id=?" if uid is not None else ""
+    hid = "AND COALESCE(pr.hide_bets,0)=0" if exclude_hidden else ""
+    args = (uid,) if uid is not None else ()
+    for r in all_(conn, f"""SELECT p.id, p.event_id, p.market, p.pick, p.label, p.amount, p.odds, p.status, p.payout, p.score, p.created_at,
+                                  e.title, e.status, e.starts_at, e.sport, p.user_id
+                           FROM market_bets p LEFT JOIN events e ON e.id=p.event_id LEFT JOIN profiles pr ON pr.user_id=p.user_id
+                           WHERE 1=1 {who} {hid} ORDER BY p.id DESC LIMIT ?""", (*args, limit)):
+        out.append({"kind": "market", "id": r[0], "user_id": r[15], "amount": r[5], "odds": r[6], "status": r[7], "payout": r[8], "created_at": r[10],
                     "sport": r[14] or "", "legs": [{"event_id": r[1], "title": r[11] or f"Матч #{r[1]}", "market": r[2], "pick": r[3],
                                                     "label": markets.full_label(r[2], r[4]), "odds": r[6], "status": r[7], "score": r[9],
                                                     "open": betlog._open(r[12], r[13])}]})
-    for b in mexpress.bet_rows(conn, "user_id=?", (uid,), limit):
-        b.pop("user_id", None)
+    conds, params = ["1=1"], []
+    if uid is not None:
+        conds.append("user_id=?")
+        params.append(uid)
+    if exclude_hidden:
+        conds.append("user_id NOT IN (SELECT user_id FROM profiles WHERE COALESCE(hide_bets,0)=1)")
+    for b in mexpress.bet_rows(conn, " AND ".join(conds), tuple(params), limit):
         out.append({"kind": "mx", **b, "sport": "Экспресс+"})
     out.sort(key=lambda x: x["created_at"] or "", reverse=True)
     out = out[:limit]
@@ -80,6 +94,8 @@ def my_new_bets(conn, uid, limit):
     for b in out:
         b["copyable"] = b["status"] == "pending" and bool(b["legs"]) and all(l["open"] for l in b["legs"])
         b["express"] = b["kind"] == "mx"
+        if uid is not None:
+            b.pop("user_id", None)
     return out
 
 
@@ -193,3 +209,56 @@ def shared_copy(request: Request, body: dict = Body(...)):
         bal = core.balance_of(conn, uid)
         core.notify_many(conn, [(r[0], f"🔗 Игрок <b>{html.escape(core.display_name(user))}</b> поставил так же по твоей ссылке.")])
     return {"ok": True, "odds": odds, "balance": bal, "unlocked": core.pop_unlocked()}
+
+
+# ---------------- «Лента ставок игроков» ----------------
+FEED_FILTERS = ("all", "markets", "single", "express", "copy")
+FEED_TTL = 20
+FEED_SIZE = 40
+_feed_cache = {}  # фильтр -> (monotonic, rows)
+
+
+def _is_markets(b):
+    return b["kind"] == "market" or (b["kind"] == "mx" and any(l.get("market") != "1x2" for l in b["legs"]))
+
+
+def _feed_rows(conn, f):
+    if f == "markets":  # отдельный запрос: ставки на рынки не вытесняются потоком одинаров
+        rows = [b for b in my_new_bets(conn, None, 80, exclude_hidden=True) if _is_markets(b)]
+    else:
+        rows = betlog.collect(conn, None, 120, exclude_hidden=True)
+        _fill_closed_legs(conn, rows)
+        if f == "single":
+            rows = [b for b in rows if b["kind"] == "single"]
+        elif f == "express":
+            rows = [b for b in rows if b["kind"] in ("express", "mx")]
+        elif f == "copy":
+            rows = [b for b in rows if b["copyable"]]
+    rows = rows[:FEED_SIZE]
+    uids = list({b["user_id"] for b in rows})
+    info = {}
+    if uids:
+        for r in all_(conn, f"""SELECT u.user_id, COALESCE(u.first_name, u.username, 'Игрок'), COALESCE(pr.xp,0), COALESCE(pr.avatar,''), COALESCE(pr.frame,'')
+                                FROM users u LEFT JOIN profiles pr ON pr.user_id=u.user_id WHERE u.user_id IN ({','.join('?' * len(uids))})""", uids):
+            info[r[0]] = {"name": r[1], "level": core.level_for(r[2]), "avatar": r[3], "frame": r[4]}
+    out = []
+    for b in rows:
+        b = {**b, **info.get(b["user_id"], {"name": "Игрок", "level": 1, "avatar": "", "frame": ""})}
+        b["uid"] = b.pop("user_id")
+        out.append(b)
+    return out
+
+
+@router.get("/feed")
+def feed(request: Request, f: str = "all"):
+    viewer = int(auth(request)["id"])
+    f = f if f in FEED_FILTERS else "all"
+    hit = _feed_cache.get(f)
+    if hit and time.monotonic() - hit[0] < FEED_TTL:
+        rows = hit[1]
+    else:
+        with db() as conn:
+            rows = _feed_rows(conn, f)
+        _feed_cache[f] = (time.monotonic(), rows)
+    out = [{**b, "mine": b["uid"] == viewer} for b in rows]
+    return {"filter": f, "bets": out, "ttl": FEED_TTL}
