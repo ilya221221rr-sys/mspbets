@@ -13,6 +13,7 @@ import logging
 
 from . import analytics, betting, blackjack, cases, core, crash, dotanews, feed, games, newsreader, social, support, updates  # noqa: F401
 from . import plus  # рулетка, дуэли, джекпот, доп. рынки, VIP-кэшбэк (extras/plus.py)
+from . import wave1  # бонус и страховка экспресса, фрибеты, сезонный пропуск, карточки ставок (extras/wave1.py)
 
 log = logging.getLogger("mspbets.extras")
 _tasks = []
@@ -28,6 +29,7 @@ def register(app):
     for r in (cases.router, games.router, crash.router, blackjack.router, social.router, feed.router, updates.router, support.router, analytics.router):
         app.include_router(r)
     plus.register(app)
+    wave1.register(app)
 
 
 def _refund_nards():
@@ -51,6 +53,7 @@ def _init():
     _refund_nards()
     crash.recover()
     plus.init()
+    wave1.init()
 
 
 async def startup():
@@ -59,6 +62,7 @@ async def startup():
     _tasks.append(asyncio.create_task(social.scheduler()))
     _tasks.append(asyncio.create_task(feed.scheduler()))
     _tasks.append(asyncio.create_task(plus.scheduler()))
+    _tasks.append(asyncio.create_task(wave1.scheduler()))
     log.info("extras запущены: игры, кейсы, краш, турниры, автозагрузка матчей")
 
 

@@ -1,0 +1,84 @@
+/* MSPBETS — первая волна MSP 3.0: бонус/страховка экспресса, фрибеты, сезонный пропуск, карточки ставок.
+   Все классы с префиксом w1- (или внутри #w1-*), глобальные классы не переопределяются. */
+
+/* --- подсказки бонуса и страховки в купонах --- */
+.w1-perks { display: grid; gap: 6px; margin: 8px 0 2px; }
+.w1-perk { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 12px; font-size: 12px; line-height: 1.35;
+  background: var(--surface-2); border: 1px dashed var(--line-2, var(--line)); color: var(--muted); }
+.w1-perk b { color: var(--text); }
+.w1-perk small { display: block; font-size: 10.5px; color: var(--muted); margin-top: 1px; }
+.w1-perk.on { color: var(--text); border-style: solid; border-color: rgba(255, 201, 60, .45); background: linear-gradient(135deg, rgba(255, 201, 60, .12), transparent 70%), var(--surface-2); }
+.w1-perk.on b { color: var(--gold); }
+
+/* --- кнопка «Фрибетом» --- */
+.w1-fb-btn { background: linear-gradient(135deg, rgba(46, 229, 157, .18), rgba(124, 92, 255, .18)); border: 1px solid rgba(46, 229, 157, .5); color: var(--text); font-weight: 800; }
+.w1-fb-btn i { font-style: normal; display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: #2EE59D; color: #06231a; font-size: 11px; line-height: 18px; }
+.w1-fb-btn.hidden { display: none !important; }
+.mx-panel .btn-row { flex-wrap: wrap; }
+.mx-panel .btn-row .w1-fb-btn { flex-basis: 100%; }
+.mk-slip-btns .w1-fb-btn { grid-column: 1 / -1; }
+.w1-fb-slip { margin-top: 8px; }
+
+/* --- выбор фрибета --- */
+#w1-fb-modal, #w1-shared { z-index: 120; }
+.w1-fb-sheet, .w1-sh-sheet { max-width: 440px; width: 100%; max-height: 86vh; overflow: auto; }
+.w1-fb-what { font-size: 13px; color: var(--muted); margin-bottom: 10px; overflow-wrap: anywhere; }
+.w1-fb-what b { color: var(--text); }
+.w1-fb-item { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 12px; margin-bottom: 8px; border-radius: var(--r-md);
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--text); }
+.w1-fb-item:active { transform: scale(.985); }
+.w1-fb-am { font-family: var(--font-display); font-weight: 800; font-size: 16px; color: #2EE59D; white-space: nowrap; }
+.w1-fb-tx { flex: 1; min-width: 0; } .w1-fb-tx b { display: block; font-size: 13px; } .w1-fb-tx small { color: var(--muted); font-size: 11px; }
+
+/* --- раздел «Фрибеты» --- */
+.w1-fb-total { margin-bottom: 10px; font-size: 13px; color: var(--muted); } .w1-fb-total b { color: var(--text); }
+.w1-fb-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 8px; border-radius: var(--r-md);
+  background: linear-gradient(135deg, rgba(46, 229, 157, .12), transparent 60%), var(--surface); border: 1px solid rgba(46, 229, 157, .35); }
+.w1-fb-card b { font-family: var(--font-display); font-size: 17px; white-space: nowrap; }
+.w1-fb-card span { flex: 1; min-width: 0; font-size: 12.5px; } .w1-fb-card span small { display: block; color: var(--muted); font-size: 11px; }
+.w1-fb-card em { font-style: normal; font-size: 11px; font-weight: 800; color: var(--gold); white-space: nowrap; }
+.w1-howto { font-size: 12.5px; } .w1-howto ol { margin: 8px 0; padding-left: 18px; } .w1-howto li { margin: 3px 0; } .w1-howto small { color: var(--muted); }
+
+/* --- история и карточка ставки --- */
+.w1-tag { color: #2EE59D; border-color: rgba(46, 229, 157, .45); }
+.w1-card-perks { display: grid; gap: 6px; margin-top: 8px; padding: 9px 10px; border-radius: 12px; font-size: 11.5px; line-height: 1.4;
+  background: rgba(255, 201, 60, .08); border: 1px solid rgba(255, 201, 60, .3); }
+
+/* --- лента: кнопка «все рынки матча» (из plus.js betCard) --- */
+.bl-leg .bl-mk { flex: none; padding: 3px 7px; border-radius: 999px; font-size: 11px; font-weight: 800; color: var(--primary-2, var(--primary));
+  background: var(--surface-2); border: 1px solid var(--line); }
+.bl-hint { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
+
+/* --- сезонный пропуск --- */
+.w1-pass-banner .dw-b-ic, .w1-fb-banner .dw-b-ic { font-size: 26px; }
+.w1-pass-top { display: grid; gap: 10px; }
+.w1-pass-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; }
+.w1-pass-row small { display: block; color: var(--muted); font-size: 11px; } .w1-pass-row b { font-size: 14px; }
+.w1-pass-lv { text-align: center; } .w1-pass-lv b { font-family: var(--font-display); font-size: 30px; line-height: 1; } .w1-pass-lv i { font-style: normal; font-size: 14px; color: var(--muted); }
+.w1-pass-bar { height: 10px; }
+.w1-pass-sub { font-size: 12px; color: var(--muted); }
+.w1-prem-btn { display: block; border: 1px solid rgba(255, 201, 60, .55); background: linear-gradient(135deg, rgba(255, 201, 60, .2), transparent 70%), var(--surface-2); color: var(--text); font-weight: 800; }
+.w1-prem-btn small { display: block; font-weight: 600; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.w1-prem-on { text-align: center; font-weight: 800; color: var(--gold); }
+.w1-track-head, .w1-lv { display: grid; grid-template-columns: 40px 1fr 1fr; gap: 8px; align-items: stretch; }
+.w1-track-head { font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 6px; }
+.w1-track { display: grid; gap: 6px; margin-bottom: 10px; }
+.w1-lv-n { display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; border-radius: 10px; font-weight: 800; font-size: 13px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.w1-lv-n small { font-size: 8.5px; font-weight: 700; opacity: .75; }
+.w1-lv.on .w1-lv-n { background: var(--grad, var(--primary)); color: #fff; border-color: transparent; }
+.w1-lv.next .w1-lv-n { border-color: var(--gold); color: var(--gold); }
+.w1-rw { position: relative; padding: 8px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); font-weight: 800; font-size: 13px; opacity: .65; }
+.w1-rw small { margin-left: 4px; font-size: 10.5px; font-weight: 600; color: var(--muted); }
+.w1-rw em { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-style: normal; font-size: 12px; }
+.w1-lv.on .w1-rw { opacity: 1; }
+.w1-rw.prem { border-color: rgba(255, 201, 60, .3); }
+.w1-rw.locked { opacity: .45; }
+.w1-rw.ready { border-color: #2EE59D; box-shadow: 0 0 0 1px rgba(46, 229, 157, .35) inset; }
+.w1-rw.got { opacity: .55; }
+
+/* --- «Лента ставок игроков»: фильтры --- */
+.w1-feed-f { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; scrollbar-width: none; }
+.w1-feed-f::-webkit-scrollbar { display: none; }
+.w1-chip { flex: none; padding: 7px 12px; border-radius: 999px; font-size: 12px; font-weight: 800; white-space: nowrap;
+  background: var(--surface-2); border: 1px solid var(--line-2); color: var(--muted); }
+.w1-chip.on { background: var(--grad); border-color: transparent; color: #fff; }
