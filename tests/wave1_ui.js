@@ -228,6 +228,37 @@ async function open(uid, name, startParam) {
   const lt = $('ledger-list').textContent;
   check('журнал: «Фрибет», «Сезонный пропуск», «Премиум-пропуск»', /Фрибет/.test(lt) && /Сезонный пропуск/.test(lt) && /Премиум-пропуск/.test(lt), lt.slice(0, 300));
 
+  console.log('\n== админка: выдача фрибетов');
+  await tab('admin'); await sleep(1200);
+  check('в админке раздел «🎁 Фрибеты» с формой', !!$('w1-adm-fb') && !!$('w1-adm-fb-form') && /Фрибеты/.test($('w1-adm-fb').querySelector('summary').textContent));
+  $('w1-adm-fb').open = true;
+  $('w1-adm-fb-target').value = '@u777'; $('w1-adm-fb-amount').value = '4444'; $('w1-adm-fb-count').value = '2'; $('w1-adm-fb-days').value = '5'; $('w1-adm-fb-note').value = 'Тест админки';
+  $('w1-adm-fb-form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true })); await sleep(1500);
+  const al = $('w1-adm-fb-list').textContent;
+  check('выдано 2 × 4 444 по @username, видно в списке выданных', ($('w1-adm-fb-list').textContent.match(/4\s444/g) || []).length === 2 && /Тест админки/.test(al), al.slice(0, 200));
+  const myFb = await me.get('/api/v2/freebets');
+  check('у игрока появились 2 фрибета на 5 дней', myFb.active.filter((f) => f.amount === 4444 && f.note === 'Тест админки').length === 2);
+  $$('#w1-adm-fb-list [data-action="w1-adm-fb-revoke"]')[0].click(); await sleep(300);
+  $('dialog-ok').click(); await sleep(1200);
+  check('«Отменить» в списке: один фрибет отменён', /отменён/.test($('w1-adm-fb-list').textContent) && (await me.get('/api/v2/freebets')).active.filter((f) => f.amount === 4444).length === 1);
+
+  console.log('\n== фрибет на обычный экспресс');
+  await tab('matches');
+  $$('[data-action="mode"][data-mode="express"]')[0].click(); await sleep(300);
+  for (const id of [3, 6]) { $$(`#event-list [data-action="odd"][data-id="${id}"][data-choice="2"]`)[0].click(); await sleep(200); }
+  await sleep(300);
+  const fbEx = d.querySelector('#express-body [data-action="w1-fb-ex"]');
+  check('в купоне экспресса кнопка «🎁 Фрибетом»', fbEx && !fbEx.classList.contains('hidden'), fbEx && fbEx.outerHTML);
+  const exBefore = (await me.get('/api/history')).filter((h) => h.kind === 'express').length;
+  fbEx.click(); await sleep(400);
+  check('окно выбора: «Экспресс из 2 событий»', !$('w1-fb-modal').classList.contains('hidden') && /Экспресс из 2 событий/.test($('w1-fb-pick').textContent));
+  $$('#w1-fb-pick .w1-fb-item').find((x) => /4\s444/.test(x.textContent)).click(); await sleep(1600);
+  const hx2 = (await me.get('/api/history')).filter((h) => h.kind === 'express');
+  check('экспресс фрибетом 4 444 принят, купон очищен', hx2.length === exBefore + 1 && hx2[0].points === 4444 && (M.state.cart || []).length === 0, JSON.stringify(hx2[0] || {}).slice(0, 200));
+  await tab('history'); await sleep(1200);
+  const top = ($$('#history-list .hist')[0] || {}).textContent || '';
+  check('в истории экспресс с меткой «🎁 Фрибет»', /Экспресс/.test(top) && /Фрибет/.test(top), top.replace(/\s+/g, ' ').slice(0, 120));
+
   console.log(errors.length ? '\nОшибки JS:\n' + errors.join('\n') : '\nОшибок JS нет');
   check('нет ошибок JS', errors.length === 0);
   console.log(`\nИтог: ${okc} ✓, ${bad} ✗`);
