@@ -25,7 +25,7 @@ import libsql
 _real = libsql.connect
 libsql.connect = lambda *a, **k: _real(DB)
 import app as A
-from extras import core, plus, markets, roulette, duels, jackpot, vipback
+from extras import core, plus, markets, roulette, duels, jackpot
 from fastapi.testclient import TestClient
 
 core.ctx.bot = None
@@ -319,11 +319,11 @@ with TestClient(A.app) as c:
         def random(self): return 0.0
     JP.RNG = Hit()
     a.post("/api/v2/roulette/spin", {"bets": [{"key": "black", "amount": 1000}]})
-    ba = a.bal()
+    ba, tj = a.bal(), last_tx()
     check("срыв джекпота", plus.jackpot_tick() == 1)  # (сам срыв не даёт XP — бонусов уровня тут нет)
     st = a.get("/api/v2/jackpot").json()
     won = st["unseen"][0]
-    check(f"сорван Grand (одна ставка — один уровень): +{won['amount']}", won["tier"] == "grand" and won["amount"] == jp3["grand"] + 5 and a.bal() == ba + won["amount"], st)
+    check(f"сорван Grand (одна ставка — один уровень): +{won['amount']}", won["tier"] == "grand" and won["amount"] == jp3["grand"] + 5 and a.bal() == ba + won["amount"] + bonus(100, tj), st)  # «Крупный куш» может дать +1000
     check("банк Grand сброшен до стартового", next(t for t in st["tiers"] if t["key"] == "grand")["amount"] == 500000)
     check("победитель в ленте", st["recent"][0]["name"] == "Алиса")
     check("в журнале вид jackpot", sql("select count(*) from transactions where user_id=100 and kind='jackpot'", fetch=True)[0][0] == 1)
@@ -334,39 +334,10 @@ with TestClient(A.app) as c:
     journal_ok(100, "джекпот")
 
     # ------------------------------------------------------------------
-    print("\n== VIP-кэшбэк и рейкбек")
-    v = a.get("/api/v2/vipback").json()
-    check("таблица VIP 0–4", [r["vip"] for r in v["table"]] == [0, 1, 2, 3, 4] and v["table"][4]["cashback"] == 0.15)
-    rb0 = v["rakeback"]["available"]
-    check(f"рейкбек накопился со ставок после запуска: {rb0}", rb0 > 0)
-    wager = v["rakeback"]["wager"]
-    check("рейкбек = 0.5% ставок (VIP 0)", rb0 == int(wager * 0.005))
-    ba = a.bal()
-    r = a.post("/api/v2/vipback/rakeback")
-    check("рейкбек получен", r.status_code == 200 and a.bal() == ba + rb0, r.text)
-    check("повторно — нечего забирать", a.post("/api/v2/vipback/rakeback").status_code == 400)
-    a.post("/api/v2/roulette/spin", {"bets": [{"key": "odd", "amount": 20000}]})
-    check("новая ставка 20 000 → рейкбек +100", a.get("/api/v2/vipback").json()["rakeback"]["available"] == 100)
-    # создание+отмена дуэли не даёт рейкбек
-    d = a.post("/api/v2/duels/create", {"game": "dice", "amount": 50000}).json()["duel"]; a.post("/api/v2/duels/cancel", {"id": d["id"]})
-    check("создание+отмена дуэли не накручивает рейкбек", a.get("/api/v2/vipback").json()["rakeback"]["available"] == 100)
-    # кэшбэк за прошлую неделю: переносим проигрышные ставки в прошлую неделю
-    prev, cur, _ = vipback.week_bounds()
-    mid = (prev + datetime.timedelta(days=2)).isoformat()
-    w = U(c, 500, "Ваня"); w.bal(); give(500, 100000)
-    sql("INSERT INTO transactions (user_id, amount, balance_after, kind, note, created_at) VALUES (500, -40000, 0, 'game_bet', 'тест', ?)", (mid,))
-    sql("INSERT INTO transactions (user_id, amount, balance_after, kind, note, created_at) VALUES (500, 10000, 0, 'game_win', 'тест', ?)", (mid,))
-    sql("INSERT INTO transactions (user_id, amount, balance_after, kind, note, created_at) VALUES (500, 30000, 0, 'admin', 'компенсация теста', ?)", (mid,))
-    cb = w.get("/api/v2/vipback").json()["cashback"]
-    check(f"кэшбэк: проигрыш {cb['loss']} → 5% = {cb['amount']}", cb["loss"] == 30000 and cb["amount"] == 1500, cb)
-    bw = w.bal()
-    check("кэшбэк получен", w.post("/api/v2/vipback/cashback").status_code == 200 and w.bal() == bw + 1500)
-    check("второй раз за неделю нельзя", w.post("/api/v2/vipback/cashback").status_code == 400)
-    check("без проигрыша кэшбэка нет", U(c, 600, "Гена").post("/api/v2/vipback/cashback").status_code == 400)
-    # VIP 4
-    sql("UPDATE profiles SET xp=? WHERE user_id=500", (core.xp_for_level(60),))
-    check("VIP 4 → ставка рейкбека 1.5%", w.get("/api/v2/vipback").json()["rakeback"]["rate"] == 0.015)
-    journal_ok(100, "VIP")
+    print("\n== рейкбек и кэшбэк удалены")
+    check("эндпоинты /api/v2/vipback больше нет", a.get("/api/v2/vipback").status_code == 404
+          and a.post("/api/v2/vipback/rakeback").status_code in (404, 405) and a.post("/api/v2/vipback/cashback").status_code in (404, 405))
+    check("в plus.js нет VIP-блока", "/api/v2/vipback" not in c.get("/web/plus.js").text)
 
     # ------------------------------------------------------------------
     print("\n== фронтенд")

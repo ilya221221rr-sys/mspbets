@@ -1,6 +1,6 @@
 /* ==========================================================
    MSPBETS — стили новых разделов (plus.js): джекпот, рулетка,
-   дуэли, доп. рынки, VIP-кэшбэк. Только переменные темы — работает
+   дуэли, доп. рынки. Только переменные темы — работает
    и в обычной, и в праздничной теме.
    ========================================================== */
 
@@ -131,22 +131,6 @@
 .mk-slip-odd { text-align: right; } .mk-slip-odd b { font-family: var(--font-display); color: var(--primary-2); font-size: 18px; }
 .mk-slip .btn { margin-top: 8px; }
 
-/* ---- VIP-кэшбэк и рейкбек ---- */
-.vb { border-color: rgba(255, 201, 60, .35); background: linear-gradient(160deg, rgba(255, 201, 60, .08), transparent 55%), var(--surface); }
-.vb-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
-.vb-lvl { font-size: 15px; } .vb-lvl small { color: var(--muted); font-weight: 600; font-size: 12px; }
-.vb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.vb-box { display: flex; flex-direction: column; gap: 3px; padding: 10px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); min-width: 0; }
-.vb-box small { font-size: 11px; font-weight: 700; color: var(--muted); }
-.vb-box b { font-family: var(--font-display); font-weight: 800; font-size: 22px; color: var(--gold); }
-.vb-box span { font-size: 10.5px; color: var(--muted); min-height: 26px; }
-.vb-box .btn { margin-top: auto; }
-.vb-table { margin-top: 10px; font-size: 12px; }
-.vb-table summary { cursor: pointer; color: var(--primary-2); font-weight: 700; }
-.vb-table table { width: 100%; border-collapse: collapse; margin-top: 8px; text-align: center; }
-.vb-table th { color: var(--muted); font-weight: 700; font-size: 11px; padding: 4px 2px; }
-.vb-table td { padding: 5px 2px; border-top: 1px solid var(--line); }
-.vb-table tr.on td { color: var(--gold); font-weight: 800; }
 
 @media (prefers-reduced-motion: reduce) {
   .jp-banner::before, .jp-rays, .jp-coins, .du-coin.spin, .du-dice span.roll { animation: none !important; }

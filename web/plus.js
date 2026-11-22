@@ -4,7 +4,6 @@
      • 🎡 европейская рулетка
      • ⚔️ дуэли 1 на 1
      • 💰 прогрессивный джекпот Mini / Major / Grand
-     • ♻️ VIP-кэшбэк и рейкбек (раздел «Бонусы»)
      • 🚀 экспресс+ — тоталы, форы, точный счёт и П1/X/П2 в одном купоне
      • 👥 все виды ставок в профилях игроков и «Ленте ставок»
      • 🎡 ежедневное колесо (20 000 — 500 000 PTS раз в сутки)
@@ -872,43 +871,6 @@
   })(M.tabs.profile);
 
   // ==========================================================
-  //  БОНУСЫ: VIP-кэшбэк и рейкбек
-  // ==========================================================
-  const bonusBody = $('bonus-body');
-  if (bonusBody) bonusBody.insertAdjacentHTML('afterend', '<div id="vb-body"></div>');
-  const pct = (x) => String(Math.round(x * 10000) / 100).replace('.', ',') + '%';
-  async function vbRender() {
-    const box = $('vb-body'); if (!box) return;
-    try {
-      const d = await api('/api/v2/vipback');
-      const rb = d.rakeback, cb = d.cashback, cur = cb.current;
-      const daysLeft = Math.max(0, Math.ceil((new Date(cb.deadline) - Date.now()) / 864e5));
-      box.innerHTML = `
-        <div class="gcard vb">
-          <div class="vb-head"><div><div class="label">VIP-кэшбэк и рейкбек</div><b class="vb-lvl">${d.vip ? `<span class="vip">VIP ${d.vip}</span>` : 'Без VIP'} <small>· уровень ${d.level}</small></b></div><button class="jp-info" type="button" data-action="vb-info">Что это?</button></div>
-          <div class="vb-grid">
-            <div class="vb-box"><small>♻️ Рейкбек ${pct(rb.rate)}</small><b>${fmt(rb.available)}</b><span>с каждой ставки · копится всегда</span>
-              <button class="btn btn-sm ${rb.available >= 1 ? 'btn-success' : 'btn-ghost'}" type="button" data-action="vb-rb" ${rb.available >= 1 ? '' : 'disabled'}>Забрать</button></div>
-            <div class="vb-box"><small>💸 Кэшбэк ${pct(cb.rate)} · ${esc(cb.week_label)}</small><b>${fmt(cb.claimed ? cb.claimed_amount : cb.amount)}</b><span>${cb.loss ? `проигрыш за неделю ${fmt(cb.loss)}` : 'за прошлую неделю проигрыша нет'}</span>
-              ${cb.claimed ? '<button class="btn btn-sm btn-ghost" type="button" disabled>Получено ✓</button>' : `<button class="btn btn-sm ${cb.amount >= 1 ? 'btn-success' : 'btn-ghost'}" type="button" data-action="vb-cb" ${cb.amount >= 1 ? '' : 'disabled'}>Забрать</button>`}</div>
-          </div>
-          <div class="muted-note" style="margin:10px 0 0">${!cb.claimed && cb.amount >= 1 ? `Кэшбэк за прошлую неделю можно забрать ещё ${daysLeft} дн. ` : ''}Эта неделя: ${cur.loss ? `проигрыш ${fmt(cur.loss)} → кэшбэк ≈ <b>${fmt(cur.estimate)}</b> с понедельника` : 'пока в плюсе — кэшбэк не нужен 😉'}.</div>
-          <details class="vb-table"><summary>Проценты по VIP-уровням</summary>
-            <table><tr><th>VIP</th><th>Уровень</th><th>Рейкбек</th><th>Кэшбэк</th><th>Макс.</th></tr>
-            ${d.table.map((r) => `<tr class="${r.vip === d.vip ? 'on' : ''}"><td>${r.vip || '—'}</td><td>${r.level}+</td><td>${pct(r.rakeback)}</td><td>${pct(r.cashback)}</td><td>${short(r.cap)}</td></tr>`).join('')}</table></details>
-        </div>`;
-    } catch (e) { box.innerHTML = ''; }
-  }
-  M.tabs.bonus = ((orig) => async () => { const p = vbRender(); if (orig) await orig(); await p; })(M.tabs.bonus);
-  M.actions['vb-rb'] = async (el) => { el.disabled = true; try { const r = await post('/api/v2/vipback/rakeback'); ok(`Рейкбек +${fmt(r.amount)} PTS`); U.setBal(r.balance); } catch (e) { fail(e); } vbRender(); };
-  M.actions['vb-cb'] = async (el) => { el.disabled = true; try { const r = await post('/api/v2/vipback/cashback'); ok(`Кэшбэк +${fmt(r.amount)} PTS`); U.setBal(r.balance); } catch (e) { fail(e); } vbRender(); };
-  M.actions['vb-info'] = () => dialog({
-    title: 'VIP-кэшбэк и рейкбек',
-    text: 'Рейкбек — процент от каждой твоей ставки (на матчи, в играх, кейсах), выиграла она или нет. Копится постоянно, забрать можно в любой момент.\n\nКэшбэк — раз в неделю возвращаем процент от чистого проигрыша прошлой недели (пн–вс). Забрать можно до конца следующей недели.\n\nЧем выше VIP-уровень, тем больше проценты: VIP 1 с 20 уровня, VIP 4 — с 60.',
-    okText: 'Понятно', cancelText: 'Закрыть',
-  });
-
-  // ==========================================================
   //  ЕЖЕДНЕВНОЕ КОЛЕСО: бесплатное вращение раз в сутки, 20 000 — 500 000 PTS
   // ==========================================================
   const DW_COL = { 20000: '#3b82f6', 30000: '#14b8a6', 50000: '#8b5cf6', 75000: '#f97316', 100000: '#ef4444', 200000: '#ec4899', 500000: '#FFC93C' };
@@ -1029,6 +991,7 @@
   // ==========================================================
   //  ЖУРНАЛ: подписи для новых видов операций
   // ==========================================================
+  // rakeback/cashback — функция удалена, подписи оставлены для старых записей журнала
   const KIND = { jackpot: ['💰', 'Джекпот'], rakeback: ['♻️', 'Рейкбек'], cashback: ['💸', 'Кэшбэк'], daily_wheel: ['🎡', 'Ежедневное колесо'] };
   const ledger = $('ledger-list');
   if (ledger) {
