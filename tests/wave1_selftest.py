@@ -344,7 +344,52 @@ with TestClient(A.app) as c:
     rr = b.post("/api/cashout", {"kind": "single", "id": kid, "expected": off})
     wave1.tick()
     check(f"выкуп фрибета: забираем min(жетон, выкуп) → итог {max(0, off - 8000)}", rr.status_code == 200 and b.bal() == b0 + max(0, off - 8000) + bonus(200, t0), (rr.text, b.bal() - b0, off))
+    # обычный экспресс П1/X/П2 фрибетом
+    E1, E2 = manual_event("Экс 1 — Фри", (2.0, None, 1.8)), manual_event("Экс 2 — Фри", (1.5, None, 2.6))
+    fbe1 = fb_give(adm, 200, 6000)
+    b0, t0 = b.bal(), last_tx()
+    r = b.post("/api/v2/freebets/use", {"freebet_id": fbe1, "type": "express", "items": [{"event_id": E1, "choice": "1", "odds": 2.0}, {"event_id": E2, "choice": "1", "odds": 1.4}]})
+    check("экспресс фрибетом: кэф изменился → 409, фрибет цел", r.status_code == 409 and any(f["id"] == fbe1 for f in b.get("/api/v2/freebets").json()["active"]) and b.bal() == b0, r.text)
+    r = b.post("/api/v2/freebets/use", {"freebet_id": fbe1, "type": "express", "items": [{"event_id": E1, "choice": "1", "odds": 2.0}, {"event_id": E2, "choice": "1", "odds": 1.5}]})
+    check("обычный экспресс фрибетом 6 000 (кф 3.00) принят, чистый выигрыш 12 000", r.status_code == 200 and r.json()["kind"] == "express" and r.json()["net_win"] == 12_000, r.text)
+    exid = r.json()["id"]
+    check("это именно экспресс игрока из 2 событий", sql("select user_id, amount from bets where id=?", (exid,), fetch=True) == [(200, 6000)]
+          and sql("select count(*) from bet_events where bet_id=?", (exid,), fetch=True)[0][0] == 2)
+    check("баланс не списан", b.bal() == b0 + bonus(200, t0))
+    check("в истории экспресс помечен фрибетом", f"express:{exid}" in b.get("/api/v2/betcards/history").json()["freebets"])
+    check("одно событие в экспрессе → 400", b.post("/api/v2/freebets/use", {"freebet_id": fb_give(adm, 200, 1000), "type": "express", "items": [{"event_id": E1, "choice": "1"}]}).status_code == 400)
+    settle(adm, E1, "1"); settle(adm, E2, "1")
+    wave1.tick()
+    check("экспресс зашёл → только чистый выигрыш +12 000", b.bal() == b0 + 12_000 + bonus(200, t0), b.bal() - b0)
+    E3, E4 = manual_event("Экс 3 — Фри", (2.0, None, 1.8)), manual_event("Экс 4 — Фри", (2.0, None, 1.8))
+    fbe2 = fb_give(adm, 200, 3000)
+    b0, t0 = b.bal(), last_tx()
+    b.post("/api/v2/freebets/use", {"freebet_id": fbe2, "type": "express", "items": [{"event_id": E3, "choice": "1"}, {"event_id": E4, "choice": "2"}]})
+    settle(adm, E3, "1"); settle(adm, E4, "1")
+    wave1.tick()
+    check("экспресс фрибетом проиграл → баланс не изменился", b.bal() == b0 + bonus(200, t0), b.bal() - b0)
     journal_ok(200, "фрибеты")
+
+    print("\n== фрибеты в админке")
+    sql("UPDATE users SET username='bob_w1' WHERE user_id=200")
+    n0 = len(b.get("/api/v2/freebets").json()["active"])
+    r = adm.post("/api/v2/freebets/admin/give", {"target": "@Bob_W1", "amount": 2500, "count": 3, "days": 3, "note": "За активность"})
+    check("выдача по @username, 3 штуки на 3 дня", r.status_code == 200 and len(r.json()["ids"]) == 3 and r.json()["user_id"] == 200 and "3 × 2" in r.json()["message"], r.text)
+    act = b.get("/api/v2/freebets").json()["active"]
+    check("у игрока +3 фрибета с комментарием", len(act) == n0 + 3 and sum(1 for f in act if f["note"] == "За активность" and f["amount"] == 2500) == 3, act[:2])
+    check("выдача по ID (поле target)", adm.post("/api/v2/freebets/admin/give", {"target": "200", "amount": 100}).status_code == 200)
+    check("неизвестный игрок → 404", adm.post("/api/v2/freebets/admin/give", {"target": "@nobody_here", "amount": 100}).status_code == 404)
+    check("без суммы → 400", adm.post("/api/v2/freebets/admin/give", {"target": "200"}).status_code == 400)
+    lst = adm.get("/api/v2/freebets/admin/list").json()
+    check("список выданных админом: новые сверху, с именем игрока", lst[0]["user_id"] == 200 and lst[0]["name"] == "Боб" and all(x["source"] == "admin" for x in lst), lst[:1])
+    lp = adm.get("/api/v2/freebets/admin/list", params={"target": "@bob_w1"}).json()
+    check("фрибеты конкретного игрока (все источники и статусы)", lp and all(x["user_id"] == 200 for x in lp) and {"used", "active"} <= {x["status"] for x in lp}, {x["status"] for x in lp})
+    check("не админ: список и отмена → 403", b.get("/api/v2/freebets/admin/list").status_code == 403 and b.post("/api/v2/freebets/admin/revoke", {"id": r.json()["ids"][0]}).status_code == 403)
+    rv = adm.post("/api/v2/freebets/admin/revoke", {"id": r.json()["ids"][0]})
+    check("админ отменил неиспользованный фрибет", rv.status_code == 200 and all(f["id"] != r.json()["ids"][0] for f in b.get("/api/v2/freebets").json()["active"]))
+    check("отменённым фрибетом поставить нельзя", b.post("/api/v2/freebets/use", {"freebet_id": r.json()["ids"][0], "type": "single", "event_id": manual_event("Отм — Фри", (2.0, None, 1.8)), "choice": "1"}).status_code == 400)
+    check("повторная отмена / использованный → 400", adm.post("/api/v2/freebets/admin/revoke", {"id": r.json()["ids"][0]}).status_code == 400
+          and adm.post("/api/v2/freebets/admin/revoke", {"id": fbe1}).status_code == 400)
 
     # ------------------------------------------------------------------
     print("\n== сезонный пропуск")
@@ -470,7 +515,7 @@ with TestClient(A.app) as c:
 
     print("\n== фронтенд")
     js = c.get("/web/wave1.js").text
-    check("wave1.js: история, карточка, фрибеты, пропуск, поделиться", all(x in js for x in ("/api/v2/betcards/history", "/api/v2/freebets/use", "/api/v2/pass/claim", "/api/v2/betcards/share", "/api/v2/betcards/shared", "/api/v2/betcards/feed")))
+    check("wave1.js: история, карточка, фрибеты, пропуск, поделиться", all(x in js for x in ("/api/v2/betcards/history", "/api/v2/freebets/use", "/api/v2/pass/claim", "/api/v2/betcards/share", "/api/v2/betcards/shared", "/api/v2/betcards/feed", "/api/v2/freebets/admin/give", "type: 'express'")))
     idx = c.get("/").text
     check("index.html подключает wave1.js и wave1.css после plus.js", idx.find("/web/wave1.js") > idx.find("/web/plus.js") > 0 and "/web/wave1.css" in idx)
     check("старые эндпоинты живы", a.get("/api/history").status_code == 200 and a.get("/api/v2/betlog/feed").status_code == 200)

@@ -96,6 +96,7 @@
       const box = perkBox(exp, 'w1-ex-perk', '.express-foot');
       const h = perkHtml((state.cart || []).map((i) => Number(i.odds)), Math.floor(Number(($('express-amount') || {}).value)) || 0);
       if (box && box.dataset.h !== h) { box.innerHTML = h; box.dataset.h = h; }
+      fbButton(exp.querySelector('.btn-row'), 'w1-fb-ex');
     }
   }
   function fbButton(row, action) {
@@ -165,6 +166,33 @@
     } catch (e) {
       fail(e);
       if (/изменил|закрыт/i.test(e.message) && P.mxQuote) P.mxQuote(true);
+    } finally { el.disabled = false; }
+  };
+  // обычный экспресс П1/X/П2 (старый купон внизу экрана)
+  M.actions['w1-fb-ex'] = async (el) => {
+    const cart = state.cart || [];
+    if (cart.length < 2) return toast('Мин. 2 события для экспресса', 'err');
+    await loadSum();
+    const total = Math.round(cart.reduce((a, i) => a * Number(i.odds), 1) * 100) / 100;
+    const fb = await fbPick(total, `Экспресс из ${cart.length} ${plural(cart.length, 'события', 'событий', 'событий')}`);
+    if (!fb) return;
+    el.disabled = true;
+    try {
+      await fbUse({ type: 'express', items: cart.map((i) => ({ event_id: i.eventId, choice: i.choice, odds: Number(i.odds) })) }, fb);
+      // очистка купона — штатной кнопкой «Очистить» (её обработчик внутри app.js, наружу не экспортирован)
+      const clr = document.querySelector('#express-body [data-action="express-clear"]');
+      if (clr) clr.click(); else { state.cart = []; state.expressOpen = false; if (M.renderEvents) M.renderEvents(); }
+      M.loadMe().catch(() => {});
+    } catch (e) {
+      fail(e);
+      if (/изменил/i.test(e.message) && M.loadEvents) { // обновим кэфы в купоне по свежей линии
+        try {
+          await M.loadEvents();
+          (state.cart || []).forEach((i) => { const ev = (state.events || []).find((x) => x.id === i.eventId); const o = ev && (i.choice === '1' ? ev.odds_1 : i.choice === 'X' ? ev.odds_x : ev.odds_2); if (o) i.odds = Number(o); });
+          const t = $('cart-total'); if (t) t.textContent = (state.cart || []).reduce((a, i) => a * i.odds, 1).toFixed(2);
+          perkSoon();
+        } catch (_) {}
+      }
     } finally { el.disabled = false; }
   };
   M.actions['w1-fb-mk'] = async (el) => {
@@ -523,6 +551,76 @@
   }
   M.tabs.social = async () => { navTo('profile'); await feedLoad(); };
   M.actions['w1-feed-f'] = (el) => { FD.f = el.dataset.f; feedLoad(); };
+
+  // ==========================================================
+  //  🛠 Админ-панель → «🎁 Фрибеты»: выдать по ID/@username, список выданных, отмена
+  // ==========================================================
+  const admDrop = $('admin-dropdown-points');
+  const admAnchor = admDrop ? admDrop.closest('details') : document.querySelector('#admin details.acc');
+  if (admAnchor) {
+    admAnchor.insertAdjacentHTML('afterend', `<details class="acc" id="w1-adm-fb">
+      <summary>🎁 Фрибеты</summary>
+      <form id="w1-adm-fb-form" class="acc-body" autocomplete="off">
+        <input id="w1-adm-fb-target" class="input" type="text" placeholder="ID или @username игрока" list="w1-adm-fb-users" required>
+        <datalist id="w1-adm-fb-users"></datalist>
+        <div class="row">
+          <label class="w1-adm-l">Сумма фрибета<input id="w1-adm-fb-amount" class="input" type="number" min="1" max="10000000" placeholder="напр. 5000" required inputmode="numeric"></label>
+          <label class="w1-adm-l">Штук<input id="w1-adm-fb-count" class="input" type="number" min="1" max="10" value="1" inputmode="numeric"></label>
+          <label class="w1-adm-l">Дней<input id="w1-adm-fb-days" class="input" type="number" min="1" max="60" value="7" inputmode="numeric"></label>
+        </div>
+        <input id="w1-adm-fb-note" class="input" type="text" maxlength="80" placeholder="Комментарий для игрока (необязательно)">
+        <button class="btn btn-primary" type="submit" id="w1-adm-fb-submit">🎁 Выдать фрибет</button>
+      </form>
+      <div class="acc-body" style="padding-top:0">
+        <div class="w1-adm-head"><span class="label">Выданные админом</span><button class="btn btn-sm btn-ghost" type="button" data-action="w1-adm-fb-find">Фрибеты игрока</button></div>
+        <div id="w1-adm-fb-list" class="promo-list"><div class="empty">Загрузка...</div></div>
+      </div>
+    </details>`);
+    const ST_FB = { active: ['🟢', 'активен'], used: ['🎯', 'поставлен'], expired: ['⌛', 'сгорел'], revoked: ['🚫', 'отменён'] };
+    const ddmm = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }); };
+    let admWho = '';
+    async function admList(target) {
+      admWho = target || '';
+      const box = $('w1-adm-fb-list'); if (!box) return;
+      try {
+        const rows = await api('/api/v2/freebets/admin/list' + (admWho ? '?target=' + encodeURIComponent(admWho) : ''));
+        const head = admWho ? `<div class="muted-note">Фрибеты игрока ${esc(admWho)} · <a href="#" data-action="w1-adm-fb-all">все выданные</a></div>` : '';
+        box.innerHTML = head + (rows.length ? rows.map((f) => { const st = ST_FB[f.status] || ['•', f.status]; return `<div class="promo-row">
+          <div class="promo-info"><div class="promo-code">🎁 ${fmt(f.amount)} · ${esc(f.name)} <small class="w1-adm-id">${f.user_id}</small></div>
+          <div class="promo-meta">${st[0]} ${st[1]}${f.status === 'active' ? ` до ${ddmm(f.expires_at)}` : ''} · ${esc(admWho ? f.source_label : f.note || '')} · выдан ${ddmm(f.created_at)}</div></div>
+          ${f.status === 'active' ? `<button class="btn btn-sm btn-ghost" type="button" data-action="w1-adm-fb-revoke" data-id="${f.id}" data-t="${esc(fmt(f.amount) + ' — ' + f.name)}">Отменить</button>` : ''}</div>`; }).join('') : '<div class="empty">Пока пусто</div>');
+      } catch (e) { box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    }
+    function admUsers() { // подсказки из списка игроков, который уже загружает админка
+      const dl = $('w1-adm-fb-users'), src = $('drop-user-id');
+      if (!dl || !src) return;
+      dl.innerHTML = [...src.options].filter((o) => o.value).slice(0, 300).map((o) => `<option value="${esc(o.value)}">${esc(o.textContent)}</option>`).join('');
+    }
+    $('w1-adm-fb-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = $('w1-adm-fb-submit'); btn.disabled = true;
+      try {
+        const target = $('w1-adm-fb-target').value.trim();
+        const r = await post('/api/v2/freebets/admin/give', { target, amount: Number($('w1-adm-fb-amount').value), count: Number($('w1-adm-fb-count').value) || 1,
+          days: Number($('w1-adm-fb-days').value) || 7, note: $('w1-adm-fb-note').value.trim() });
+        haptic('success'); ok('🎁 ' + r.message);
+        $('w1-adm-fb-amount').value = ''; $('w1-adm-fb-note').value = ''; $('w1-adm-fb-count').value = '1';
+        await admList(admWho);
+        loadSum(true);
+      } catch (err) { fail(err); } finally { btn.disabled = false; }
+    });
+    M.actions['w1-adm-fb-find'] = async () => {
+      const v = await dialog({ title: 'Фрибеты игрока', fields: [{ name: 't', label: 'ID или @username', value: $('w1-adm-fb-target').value || '' }], okText: 'Показать' });
+      if (v && v.t) admList(v.t.trim());
+    };
+    M.actions['w1-adm-fb-all'] = (el, e) => { if (e) e.preventDefault(); admList(''); };
+    M.actions['w1-adm-fb-revoke'] = async (el) => {
+      const yes = await dialog({ title: 'Отменить фрибет?', text: el.dataset.t + '\nИгрок больше не сможет им поставить.', okText: 'Отменить фрибет' });
+      if (!yes) return;
+      try { await post('/api/v2/freebets/admin/revoke', { id: Number(el.dataset.id) }); ok('Фрибет отменён'); admList(admWho); } catch (e) { fail(e); }
+    };
+    M.tabs.admin = ((orig) => async () => { const p = orig ? orig() : null; admList(admWho); setTimeout(admUsers, 1500); return p; })(M.tabs.admin);
+  }
 
   // ==========================================================
   //  Журнал: подписи для новых видов операций
