@@ -12,6 +12,7 @@ import asyncio
 import logging
 
 from . import analytics, betting, blackjack, cases, core, crash, dotanews, feed, games, newsreader, social, support, updates  # noqa: F401
+from . import plus  # рулетка, дуэли, джекпот, доп. рынки, VIP-кэшбэк (extras/plus.py)
 
 log = logging.getLogger("mspbets.extras")
 _tasks = []
@@ -26,6 +27,7 @@ def setup(get_db, validate, bot, admin_ids, webapp_url, bot_username):
 def register(app):
     for r in (cases.router, games.router, crash.router, blackjack.router, social.router, feed.router, updates.router, support.router, analytics.router):
         app.include_router(r)
+    plus.register(app)
 
 
 def _refund_nards():
@@ -48,6 +50,7 @@ def _init():
     cases.seed()
     _refund_nards()
     crash.recover()
+    plus.init()
 
 
 async def startup():
@@ -55,6 +58,7 @@ async def startup():
     await asyncio.to_thread(_init)
     _tasks.append(asyncio.create_task(social.scheduler()))
     _tasks.append(asyncio.create_task(feed.scheduler()))
+    _tasks.append(asyncio.create_task(plus.scheduler()))
     log.info("extras запущены: игры, кейсы, краш, турниры, автозагрузка матчей")
 
 
