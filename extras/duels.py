@@ -53,6 +53,9 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_duels_status ON duels(status, id)",
     "CREATE INDEX IF NOT EXISTS idx_duels_creator ON duels(creator_id, id)",
     "CREATE INDEX IF NOT EXISTS idx_duels_opp ON duels(opponent_id, id)",
+    # результат, который создатель ещё не видел (анимация броска покажется ему при следующем опросе)
+    "CREATE TABLE IF NOT EXISTS duel_unseen (duel_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_duel_unseen_user ON duel_unseen(user_id)",
 ]
 
 _COLS = ("id, code, game, amount, pick, private, creator_id, creator_name, opponent_id, opponent_name, "
@@ -251,6 +254,7 @@ def join(request: Request, body: dict = Body(...)):
             core.log_round(conn, p, "duel", d["amount"], prize if p == winner else 0, (prize / d["amount"]) if p == winner else 0,
                            {"duel": d["id"], "game": d["game"]})
             core.game_done(conn, p, "duel")
+        conn.execute("INSERT OR IGNORE INTO duel_unseen (duel_id, user_id) VALUES (?, ?)", (d["id"], d["creator_id"]))
         r2 = one(conn, f"SELECT {_COLS} FROM duels WHERE id=?", (d["id"],))
         bal = core.balance_of(conn, uid)
         won_txt = f"🏆 Ты победил! <b>+{money(prize)} PTS</b>" if creator_wins else f"😔 Победил соперник. Ставка {money(d['amount'])} PTS проиграна."
@@ -263,3 +267,32 @@ def join(request: Request, body: dict = Body(...)):
     out = _row(r2, uid)
     return {"ok": True, "duel": out, "win": winner == uid, "prize": prize if winner == uid else 0, "loser": loser,
             "balance": bal, "unlocked": core.pop_unlocked()}
+
+
+@router.get("/pulse")
+def pulse(request: Request):
+    """Лёгкий опрос для создателя: сколько открытых вызовов и какие дуэли сыграны, а он ещё не видел результат."""
+    user = auth(request)
+    uid = int(user["id"])
+    with db() as conn:
+        n_open = one(conn, "SELECT COUNT(*) FROM duels WHERE status='open' AND creator_id=?", (uid,))[0]
+        rows = all_(conn, f"""SELECT {', '.join('d.' + k for k in _KEYS)} FROM duel_unseen u JOIN duels d ON d.id=u.duel_id
+                              WHERE u.user_id=? AND d.status='done' ORDER BY d.id LIMIT 5""", (uid,))
+    return {"open": n_open, "unseen": [_row(r, uid) for r in rows]}
+
+
+@router.post("/seen")
+def seen(request: Request, body: dict = Body(default={})):
+    """Создатель посмотрел анимацию результата."""
+    user = auth(request)
+    uid = int(user["id"])
+    with db() as conn:
+        if body.get("id") is not None:
+            try:
+                did = int(body["id"])
+            except Exception:
+                raise HTTPException(400, "Неверный id")
+            conn.execute("DELETE FROM duel_unseen WHERE user_id=? AND duel_id=?", (uid, did))
+        else:
+            conn.execute("DELETE FROM duel_unseen WHERE user_id=?", (uid,))
+    return {"ok": True}

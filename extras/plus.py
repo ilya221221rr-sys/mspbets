@@ -5,7 +5,10 @@ extras/plus.py — подключение новых модулей «казин
   * roulette.py — европейская рулетка;
   * duels.py    — дуэли 1 на 1 между игроками;
   * jackpot.py  — прогрессивный джекпот Mini / Major / Grand;
-  * vipback.py  — VIP-кэшбэк и рейкбек.
+  * vipback.py  — VIP-кэшбэк и рейкбек;
+  * mexpress.py — экспресс с доп. рынками (тоталы, форы, точный счёт + П1/X/П2);
+  * betlog.py   — единая лента ставок игрока (все виды ставок в профиле и «Ленте ставок»);
+  * dailywheel.py — ежедневное колесо фортуны (20 000 — 500 000 PTS раз в сутки).
 
 Подключается из extras/__init__.py тремя вызовами: plus.init(), plus.register(app), plus.scheduler().
 Только новые таблицы (CREATE TABLE IF NOT EXISTS), старые таблицы и код не меняются.
@@ -16,17 +19,19 @@ import logging
 import os
 import time
 
-from . import core, duels, jackpot, markets, roulette, vipback
+from . import betlog, core, dailywheel, duels, jackpot, markets, mexpress, roulette, vipback
 from .core import one
 
 log = logging.getLogger("mspbets.plus")
 
-ROUTERS = (markets.router, roulette.router, duels.router, jackpot.router, vipback.router)
+ROUTERS = (markets.router, roulette.router, duels.router, jackpot.router, vipback.router,
+           mexpress.router, betlog.router, dailywheel.router)
 BG = os.getenv("PLUS_BG", "1") not in ("0", "false", "False", "")
 
 SCHEMA = [
     "CREATE TABLE IF NOT EXISTS plus_meta (key TEXT PRIMARY KEY, value TEXT)",
     *markets.SCHEMA, *duels.SCHEMA, *jackpot.SCHEMA, *vipback.SCHEMA,
+    *mexpress.SCHEMA, *dailywheel.SCHEMA,
 ]
 
 
@@ -74,7 +79,7 @@ async def scheduler():
         log.info("Фоновые задачи plus отключены (PLUS_BG=0)")
         return
     await asyncio.sleep(10)
-    last = {"duels": 0.0, "settle": 0.0, "lines": 0.0}
+    last = {"duels": 0.0, "settle": 0.0, "lines": 0.0, "mx": 0.0}
     while True:
         t = time.time()
         try:
@@ -85,6 +90,9 @@ async def scheduler():
             if t - last["settle"] >= 300:
                 last["settle"] = t
                 await asyncio.to_thread(markets.settle_pending)
+            if t - last["mx"] >= 120:
+                last["mx"] = t
+                await asyncio.to_thread(mexpress.settle_pending)
             if t - last["lines"] >= 1800:
                 last["lines"] = t
                 await asyncio.to_thread(markets.refresh_lines)
