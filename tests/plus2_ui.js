@@ -1,6 +1,6 @@
 // UI-проверка второй волны plus (jsdom): окно дуэли у создателя, экспресс+ с рынками,
 // все виды ставок в профиле игрока и ленте, ежедневное колесо.
-// Запуск: LOCAL_DB=/tmp/ui/p2.db PLUS_BG=0 python tests/serve_local.py  (+ посеять ESPN-матчи), затем
+// Запуск: LOCAL_DB=/tmp/ui/p2.db PLUS_BG=0 python tests/serve_local.py, затем LOCAL_DB=/tmp/ui/p2.db python tests/ui_seed.py,
 //         NODE_PATH=/tmp/ui/node_modules node tests/plus2_ui.js
 const { JSDOM, VirtualConsole } = require('jsdom');
 const crypto = require('crypto');
@@ -57,7 +57,7 @@ const num = (t) => Number(String(t).replace(/[^\d]/g, ''));
 
   console.log('\n== экспресс+: рынки в экспрессе');
   const mkBtns = $$('#event-list .mk-btn');
-  check('кнопка «Тоталы, форы» у 3 матчей ESPN (у киберспорта нет)', mkBtns.length === 3, mkBtns.length);
+  check('кнопка «Тоталы, форы» у 4 матчей ESPN (у киберспорта нет)', mkBtns.length === 4, mkBtns.length);
   const openMk = async (id) => { $$(`#event-list .mk-btn[data-id="${id}"]`)[0].click(); await sleep(900); };
   await openMk(1);
   check('в окне рынков есть «Исход матча»', /Исход матча/.test($('mk-body').textContent));
@@ -104,12 +104,11 @@ const num = (t) => Number(String(t).replace(/[^\d]/g, ''));
   check('в журнале списание −100 за экспресс+', led.some((x) => x.amount === -100 && x.kind === 'bet'), JSON.stringify(led).slice(0, 200));
   check('купон очищен', $('mx-panel').classList.contains('hidden') && JSON.parse(w.localStorage.getItem('msp_mx')).length === 0);
   check('старая панель экспресса снова доступна', !d.body.classList.contains('mx-on'));
-  await tab('mk-bets'); await sleep(600);
-  check('«Рынки и экспрессы+»: ставка с 3 событиями', /Экспресс\+ · 3/.test($('mk-bets-body').textContent) && /Тотал|Обе забьют/.test($('mk-bets-body').textContent), $('mk-bets-body').textContent.slice(0, 200));
-  $$('[data-action="mkb-tab"][data-t="single"]')[0].click(); await sleep(600);
-  check('вкладка одинаров на рынки работает', /Ставок на рынки пока нет|Ставок/.test($('mk-bets-body').textContent));
+  await tab('history'); await sleep(1200);
+  const hx = $$('#history-list .w1-hist').map((x) => x.textContent).join(' | ');
+  check('экспресс+ с 3 событиями — в общей «Истории ставок»', /Экспресс\+ · 3 события/.test(hx), hx.slice(0, 200));
   await tab('profile');
-  check('пункт меню «Рынки и экспрессы+» и «Ежедневное колесо»', !!d.querySelector('#profile-body [data-tab="mk-bets"]') && !!d.querySelector('#profile-body [data-tab="dwheel"]'));
+  check('отдельного окна «Рынки и экспрессы+» больше нет, «Ежедневное колесо» в меню', !d.querySelector('#profile-body [data-tab="mk-bets"]') && !$('mk-bets') && !!d.querySelector('#profile-body [data-tab="dwheel"]'));
 
   console.log('\n== чужая история ставок: все виды');
   const ev = await opp.get('/api/v2/markets/event/1');

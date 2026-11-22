@@ -794,7 +794,8 @@
   function betCard(b, opts = {}) {
     const st = ST[b.status] || ['•', b.status];
     const res = b.status === 'won' ? `<b class="up">+${fmt(b.payout)}</b>` : b.status === 'lost' ? `<b class="down">−${fmt(b.amount)}</b>` : b.status === 'void' ? 'возврат' : b.status === 'cashed' ? 'выкуплена' : `в игре · выигрыш ${fmt(Math.floor(b.amount * b.odds))}`;
-    const legs = b.legs.map((l) => `<div class="bl-leg"><span class="bl-ic">${b.legs.length > 1 ? LEG_IC[l.status] || '⏳' : ''}</span><div><small>${esc(l.title)}</small><b>${esc(l.label)}${l.score ? ` <i>· ${esc(l.score)}</i>` : ''}</b></div><span class="bl-o">${Number(l.odds).toFixed(2)}</span></div>`).join('');
+    const mkBtn = (l) => (opts.markets && l.open && l.event_id && MK.avail[String(l.event_id)] ? `<button type="button" class="bl-mk" data-action="mk-open" data-id="${l.event_id}" title="Все рынки матча">📊 +${MK.avail[String(l.event_id)]}</button>` : '');
+    const legs = b.legs.map((l) => `<div class="bl-leg"><span class="bl-ic">${b.legs.length > 1 ? LEG_IC[l.status] || '⏳' : ''}</span><div><small>${esc(l.title)}</small><b>${esc(l.label)}${l.score ? ` <i>· ${esc(l.score)}</i>` : ''}</b></div>${mkBtn(l)}<span class="bl-o">${Number(l.odds).toFixed(2)}</span></div>`).join('');
     return `<div class="feed-bet bl-card">
       ${opts.who ? `<div class="feed-top" data-action="player" data-uid="${b.uid}">${U.ava(b.name, b.frame, 'sm', b.avatar)}<span>${esc(b.name)}</span><span class="lv">LV ${b.level}</span></div>` : ''}
       <div class="bl-head"><span class="bl-kind">${KIND_RU[b.kind] || b.kind}${b.legs.length > 1 ? ` · ${b.legs.length}` : ''}</span><span class="bl-time">${dt(b.created_at)}</span></div>
@@ -827,7 +828,8 @@
       try {
         const d = await api('/api/v2/betlog/player/' + encodeURIComponent(uid));
         if (my !== seq) return;
-        box.innerHTML = d.hidden ? '<div class="empty">Игрок скрыл свои ставки</div>' : d.bets.length ? d.bets.map((b) => betCard(b, { copy: !d.me })).join('') : '<div class="empty">Ставок пока нет</div>';
+        await loadAvail();
+        box.innerHTML = d.hidden ? '<div class="empty">Игрок скрыл свои ставки</div>' : d.bets.length ? d.bets.map((b) => betCard(b, { copy: !d.me, markets: !d.me })).join('') : '<div class="empty">Ставок пока нет</div>';
       } catch (e) { box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
     }).observe(pBody, { childList: true });
   }
@@ -836,36 +838,18 @@
     navTo('profile');
     const box = $('social-body'); if (!box) return;
     box.innerHTML = loading;
-    const rows = await api('/api/v2/betlog/feed');
-    box.innerHTML = rows.length ? rows.map((b) => betCard(b, { who: true, copy: true })).join('') : '<div class="empty">Пока нет ставок на открытые матчи</div>';
+    const [rows] = await Promise.all([api('/api/v2/betlog/feed'), loadAvail()]);
+    box.innerHTML = rows.length ? '<div class="bl-hint">📊 — открыть все рынки матча и поставить на тотал, фору или точный счёт</div>' + rows.map((b) => betCard(b, { who: true, copy: true, markets: true })).join('') : '<div class="empty">Пока нет ставок на открытые матчи</div>';
   };
 
-  // Раздел «Мои ставки: рынки и экспрессы+» (Профиль → меню, История ставок → ссылка)
-  panel('mk-bets', back('profile', 'Профиль') + head('Рынки и экспрессы+', 'Тоталы, форы, точный счёт и экспрессы с ними') + '<div class="tabs" id="mkb-tabs"><button class="chip active" type="button" data-action="mkb-tab" data-t="mx">🚀 Экспрессы+</button><button class="chip" type="button" data-action="mkb-tab" data-t="single">📊 Одинары на рынки</button></div><div id="mk-bets-body"></div>');
-  let mkbTab = 'mx';
-  M.actions['mkb-tab'] = (el) => { mkbTab = el.dataset.t; $$('#mkb-tabs .chip').forEach((b) => b.classList.toggle('active', b === el)); M.tabs['mk-bets'](); };
-  M.tabs['mk-bets'] = async () => {
-    navTo('profile');
-    $('mk-bets-body').innerHTML = loading;
-    if (mkbTab === 'mx') {
-      const d = await api('/api/v2/mexpress/my');
-      $('mk-bets-body').innerHTML = d.bets.length ? d.bets.map((b) => betCard({ ...b, kind: 'mx' })).join('') : '<div class="empty">Экспрессов+ пока нет.<br>Открой матч → «📊 Тоталы, форы» → «＋ В экспресс».</div>';
-      return;
-    }
-    const d = await api('/api/v2/markets/my');
-    const st = d.stats;
-    $('mk-bets-body').innerHTML = (st.count ? `<div class="gcard"><div class="stat-row"><span>Ставок</span><b>${fmt(st.count)} · выиграно ${fmt(st.won)}</b></div><div class="stat-row"><span>Поставлено</span><b>${fmt(st.staked)} PTS</b></div><div class="stat-row"><span>Выплачено</span><b>${fmt(st.returned)} PTS</b></div></div>` : '') +
-      (d.bets.length ? d.bets.map((b) => mkBetRow(b, true)).join('') : '<div class="empty">Ставок на рынки пока нет.<br>Открой матч и нажми «📊 Тоталы, форы, точный счёт».</div>');
-  };
-  const histHead = document.querySelector('#history .panel-head');
-  if (histHead) histHead.insertAdjacentHTML('afterend', '<button type="button" class="mk-link" data-tab="mk-bets">🚀 Экспрессы+ и ставки на тоталы, форы, точный счёт →</button>');
+  // Ставки на рынки и экспрессы+ показываются в общей «Истории ставок» (web/wave1.js), отдельного окна больше нет.
 
   M.tabs.profile = ((orig) => async () => {
     if (orig) await orig();
     const menu = document.querySelector('#profile-body .menu');
-    if (menu && !menu.querySelector('[data-tab="mk-bets"]')) {
+    if (menu && !menu.querySelector('[data-tab="duels"]')) {
       const h = menu.querySelector('[data-tab="history"]');
-      const html = '<button data-tab="mk-bets"><span class="i">🚀</span>Рынки и экспрессы+<small>тоталы, форы, счёт</small></button><button data-tab="duels"><span class="i">⚔️</span>Дуэли 1 на 1<small>вызови друга</small></button><button data-tab="dwheel"><span class="i">🎁</span>Ежедневное колесо<small>до 500 000</small></button>';
+      const html = '<button data-tab="duels"><span class="i">⚔️</span>Дуэли 1 на 1<small>вызови друга</small></button><button data-tab="dwheel"><span class="i">🎁</span>Ежедневное колесо<small>до 500 000</small></button>';
       if (h) h.insertAdjacentHTML('afterend', html); else menu.insertAdjacentHTML('afterbegin', html);
     }
   })(M.tabs.profile);
@@ -987,6 +971,9 @@
   M.tabs.bonus = ((orig) => async () => { const p = dwLoad(); if (orig) await orig(); await p; })(M.tabs.bonus);
   setTimeout(dwLoad, 1500);
   setInterval(() => { if (DW.st && (visible('games') || visible('bonus'))) { if (!DW.st.available && new Date(DW.st.next_at) <= Date.now()) dwLoad(); else dwBadges(); } }, 1000);
+
+  // Мост для web/wave1.js (фрибеты в купонах, карточки ставок): состояние купонов и общие функции
+  M.plus = { MK, MX, betCard, mxRender, mxSave, mxQuote, mkSlip, mkLoad, loadAvail, fullLabel, KIND_RU, ST };
 
   // ==========================================================
   //  ЖУРНАЛ: подписи для новых видов операций
