@@ -24,7 +24,7 @@ import libsql
 _real = libsql.connect
 libsql.connect = lambda *a, **k: _real(DB)
 import app as A
-from extras import accaperks, betcards, core, freebets, markets, mexpress, plus, seasonpass, wave1  # noqa: F401  (модули нужны тесту через sys.modules)
+from extras import accaperks, betcards, comeback, core, freebets, markets, mexpress, plus, seasonpass, wave1  # noqa: F401  (модули нужны тесту через sys.modules)
 from fastapi.testclient import TestClient
 
 core.ctx.bot = None
@@ -513,9 +513,72 @@ with TestClient(A.app) as c:
     betcards._feed_cache.clear()
     check("неизвестный фильтр → все", a.get("/api/v2/betcards/feed", params={"f": "zzz"}).json()["filter"] == "all")
 
+    print("\n== бонус за возвращение (3+ дня без ставок)")
+    def ago(days):
+        return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)).isoformat()
+    def old_bet(uid, amount, days, kind="bet"):
+        sql("INSERT INTO transactions (user_id, amount, balance_after, kind, note, created_at) VALUES (?,?,0,?,'тест: старая ставка',?)", (uid, -amount, kind, ago(days)))
+    E, F, Gg, Hh = U(c, 500, "Ева"), U(c, 501, "Фёдор"), U(c, 502, "Гоша"), U(c, 503, "Хана")
+    for u in (E, F, Gg, Hh):
+        u.get("/api/me")
+    st = E.get("/api/v2/comeback").json()
+    check("ни разу не ставил → бонуса нет", not st["available"] and st["reason"] == "never" and [t["from_days"] for t in st["tiers"]] == [3, 7, 14], st)
+    old_bet(500, 30_000, 1)
+    check("ставил вчера → бонуса нет (активен)", E.get("/api/v2/comeback").json()["reason"] == "active")
+    sql("UPDATE transactions SET created_at=? WHERE user_id=500 AND note='тест: старая ставка'", (ago(4),))
+    st = E.get("/api/v2/comeback").json()
+    check("4 дня без ставок → 100 000 PTS, без фрибета", st["available"] and st["days"] == 4 and st["pts"] == 100_000 and st["freebet"] == 0, st)
+    check("сводка wave1 сообщает о бонусе", E.get("/api/v2/wave1/summary").json()["comeback"]["available"])
+    b0 = E.bal()
+    r = E.post("/api/v2/comeback/claim")
+    check("забрал: +100 000 на баланс, в журнале «comeback»", r.status_code == 200 and E.bal() == b0 + 100_000 and kind_sum(500, "comeback") == 100_000, r.text)
+    check("второй раз сразу → 400 (раз в неделю)", E.post("/api/v2/comeback/claim").status_code == 400 and E.get("/api/v2/comeback").json()["reason"] == "cooldown")
+    t9 = ago(9)  # «отматываем время»: бонус забран 8 дней назад, последняя ставка перед ним — 9 дней назад
+    sql("UPDATE cb_claims SET created_at=?, last_bet=? WHERE user_id=500", (ago(8), t9))
+    sql("UPDATE transactions SET created_at=? WHERE user_id=500 AND note='тест: старая ставка'", (t9,))
+    check("через неделю, но без новых ставок → снова нельзя", E.get("/api/v2/comeback").json()["reason"] == "no_bets_since" and E.post("/api/v2/comeback/claim").status_code == 400)
+    old_bet(500, 1_000, 7.5)
+    st = E.get("/api/v2/comeback").json()
+    check("поставил после бонуса и снова пропал на 7 дней → 100 000 + фрибет 100 000", st["available"] and st["days"] == 7 and st["pts"] == 100_000 and st["freebet"] == 100_000, st)
+    r = E.post("/api/v2/comeback/claim").json()
+    check("фрибет за возвращение выдан на 7 дней", r["freebet"] == 100_000 and any(f["source"] == "comeback" and f["amount"] == 100_000 and "возвращение" in f["source_label"] for f in E.get("/api/v2/freebets").json()["active"]), r)
+    old_bet(501, 25_000, 20, "game_bet")
+    st = F.get("/api/v2/comeback").json()
+    check("20 дней без игр → 200 000 + фрибет 150 000 (ставки в играх тоже считаются)", st["available"] and st["pts"] == 200_000 and st["freebet"] == 150_000, st)
+    old_bet(502, 5_000, 5)
+    check("за всё время поставил меньше 20 000 → бонуса нет (защита от фарма аккаунтами)", Gg.get("/api/v2/comeback").json()["reason"] == "low_wager" and Gg.post("/api/v2/comeback/claim").status_code == 400)
+    # напоминания в Telegram
+    old_bet(503, 40_000, 4)
+    sent = []
+    real_notify, real_bot = core.notify, core.ctx.bot
+    core.notify, core.ctx.bot = (lambda uid, text: sent.append((uid, text))), object()
+    try:
+        n1 = comeback.remind(plus.meta_get, plus.meta_set, force=True)
+        to = {u for u, _ in sent}
+        check("напоминание получили неактивные с доступным бонусом (Фёдор, Хана)", {501, 503} <= to, sent)
+        check("не пишем: кто уже забрал (Ева), мало играл (Гоша), активным (все остальные ставили сегодня)", to == {501, 503}, to)
+        txt = next(t for u, t in sent if u == 503)
+        check("в сообщении — сумма бонуса и куда зайти", "100 000 PTS" in txt and "С возвращением" in txt, txt)
+        sent.clear()
+        comeback.remind(plus.meta_get, plus.meta_set, force=True)
+        check("повторно за тот же перерыв не пишем", not sent, sent)
+        cur0 = int(plus.meta_get(core.ctx.get_db(), comeback.META_CURSOR))
+        check("курсор журнала сдвинулся до конца (дальше читаются только новые строки)", cur0 == sql("select max(id) from transactions", fetch=True)[0][0])
+        sql("UPDATE profiles SET notify=0 WHERE user_id=501")
+        old_bet(501, 10_000, 5)  # новый перерыв, но уведомления выключены
+        sent.clear()
+        comeback.remind(plus.meta_get, plus.meta_set, force=True)
+        check("игроку с выключенными уведомлениями не пишем", all(u != 501 for u, _ in sent), sent)
+        act = sql("select last_bet from cb_activity where user_id=501", fetch=True)[0][0]
+        check("таблица активности обновилась инкрементально", act > ago(6), act)
+        check("без force — не чаще раза в 10 минут", comeback.remind(plus.meta_get, plus.meta_set) == 0)
+    finally:
+        core.notify, core.ctx.bot = real_notify, real_bot
+    check(f"за проход не больше {comeback.NOTIFY_BATCH} сообщений", n1 <= comeback.NOTIFY_BATCH)
+
     print("\n== фронтенд")
     js = c.get("/web/wave1.js").text
-    check("wave1.js: история, карточка, фрибеты, пропуск, поделиться", all(x in js for x in ("/api/v2/betcards/history", "/api/v2/freebets/use", "/api/v2/pass/claim", "/api/v2/betcards/share", "/api/v2/betcards/shared", "/api/v2/betcards/feed", "/api/v2/freebets/admin/give", "type: 'express'")))
+    check("wave1.js: история, карточка, фрибеты, пропуск, поделиться", all(x in js for x in ("/api/v2/betcards/history", "/api/v2/freebets/use", "/api/v2/pass/claim", "/api/v2/betcards/share", "/api/v2/betcards/shared", "/api/v2/betcards/feed", "/api/v2/freebets/admin/give", "type: 'express'", "/api/v2/comeback/claim")))
     idx = c.get("/").text
     check("index.html подключает wave1.js и wave1.css после plus.js", idx.find("/web/wave1.js") > idx.find("/web/plus.js") > 0 and "/web/wave1.css" in idx)
     check("старые эндпоинты живы", a.get("/api/history").status_code == 200 and a.get("/api/v2/betlog/feed").status_code == 200)

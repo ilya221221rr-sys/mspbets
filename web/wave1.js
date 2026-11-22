@@ -51,6 +51,7 @@
     $$('.w1-fb-btn').forEach((b) => { b.classList.toggle('hidden', !n); const c = b.querySelector('i'); if (c) c.textContent = n; });
     perkLines();
     passBanner();
+    cbPopup();
   }
 
   // ==========================================================
@@ -514,7 +515,8 @@
     const box = $('w1-pass-bonus'), s = W.sum && W.sum.pass;
     if (!box || !s) return;
     const fbN = fbList().length;
-    box.innerHTML = `<button type="button" class="dw-banner w1-pass-banner${s.claimable ? ' ready' : ''}" data-tab="spass"><span class="dw-b-ic">🎟</span><span class="dw-b-t"><b>Сезонный пропуск · ${esc(s.title)}</b><small>${s.claimable ? `Можно забрать наград: ${s.claimable}` : (s.level >= s.max_level ? `Уровень ${s.level} из ${s.max_level} · пройден целиком!` : `Уровень ${s.level} из ${s.max_level} · до следующего ${short(s.level_points - s.into_level)} PTS ставок`)}${s.premium ? ' · 👑' : ''}</small></span><span class="dw-b-go">${s.claimable ? 'Забрать' : '→'}</span></button>` +
+    const cb = W.sum && W.sum.comeback;
+    box.innerHTML = (cb && cb.available ? `<button type="button" class="dw-banner w1-cb-banner" data-action="w1-cb-open"><span class="dw-b-ic">👋</span><span class="dw-b-t"><b>Бонус за возвращение</b><small>${cbGift(cb)} — тебя не было ${cb.days} ${plural(cb.days, 'день', 'дня', 'дней')}</small></span><span class="dw-b-go">Забрать</span></button>` : '') + `<button type="button" class="dw-banner w1-pass-banner${s.claimable ? ' ready' : ''}" data-tab="spass"><span class="dw-b-ic">🎟</span><span class="dw-b-t"><b>Сезонный пропуск · ${esc(s.title)}</b><small>${s.claimable ? `Можно забрать наград: ${s.claimable}` : (s.level >= s.max_level ? `Уровень ${s.level} из ${s.max_level} · пройден целиком!` : `Уровень ${s.level} из ${s.max_level} · до следующего ${short(s.level_points - s.into_level)} PTS ставок`)}${s.premium ? ' · 👑' : ''}</small></span><span class="dw-b-go">${s.claimable ? 'Забрать' : '→'}</span></button>` +
       (fbN ? `<button type="button" class="dw-banner w1-fb-banner" data-tab="freebets"><span class="dw-b-ic">🎁</span><span class="dw-b-t"><b>Фрибеты: ${fbN}</b><small>На ${fmt(fbList().reduce((a, f) => a + f.amount, 0))} PTS · ближайший сгорит через ${daysLeft(fbList()[0].expires_at)}</small></span><span class="dw-b-go">→</span></button>` : '');
   }
   M.tabs.bonus = ((orig) => async () => { const p = loadSum(true); if (orig) await orig(); await p; passBanner(); })(M.tabs.bonus);
@@ -528,6 +530,53 @@
       if (h) h.insertAdjacentHTML('afterend', html); else menu.insertAdjacentHTML('afterbegin', html);
     }
   })(M.tabs.profile);
+
+  // ==========================================================
+  //  👋 Бонус за возвращение (3+ дня без ставок): окно при входе + баннер в «Бонусах»
+  // ==========================================================
+  const cbGift = (c) => `+${fmt(c.pts)} PTS${c.freebet ? ` и фрибет ${fmt(c.freebet)}` : ''}`;
+  function cbModal() {
+    let m = $('w1-cb-modal');
+    if (m) return m;
+    m = document.createElement('div');
+    m.id = 'w1-cb-modal'; m.className = 'modal modal-center hidden'; m.dataset.action = 'w1-cb-backdrop';
+    m.innerHTML = '<div class="sheet w1-cb-sheet" role="dialog" aria-modal="true"><div id="w1-cb-body"></div></div>';
+    document.body.appendChild(m);
+    return m;
+  }
+  function cbOpen() {
+    const c = W.sum && W.sum.comeback;
+    if (!c || !c.available) return;
+    const m = cbModal();
+    $('w1-cb-body').innerHTML = `<div class="w1-cb-wave">👋</div>
+      <div class="w1-cb-title">С возвращением!</div>
+      <div class="w1-cb-sub">Тебя не было ${c.days} ${plural(c.days, 'день', 'дня', 'дней')} — держи подарок:</div>
+      <div class="w1-cb-gifts"><div class="w1-cb-gift"><b>+${fmt(c.pts)}</b><small>PTS на баланс</small></div>${c.freebet ? `<div class="w1-cb-gift fb"><b>🎁 ${fmt(c.freebet)}</b><small>фрибет на 7 дней</small></div>` : ''}</div>
+      <button class="btn btn-primary btn-block btn-lg" type="button" data-action="w1-cb-claim">Забрать бонус</button>
+      <button class="btn btn-ghost btn-block" type="button" data-action="w1-cb-later">Позже</button>
+      <div class="muted-note">Бонус за возвращение можно получать не чаще раза в неделю. Он также ждёт тебя в «Бонусах».</div>`;
+    m.classList.remove('hidden');
+  }
+  const cbHide = () => { const m = $('w1-cb-modal'); if (m) m.classList.add('hidden'); };
+  function cbPopup() { // показываем само один раз за заход в приложение
+    const c = W.sum && W.sum.comeback;
+    if (!c || !c.available || W.cbShown) return;
+    W.cbShown = true;
+    setTimeout(cbOpen, 600);
+  }
+  M.actions['w1-cb-open'] = () => cbOpen();
+  M.actions['w1-cb-later'] = () => cbHide();
+  M.actions['w1-cb-backdrop'] = (el, e) => { if (e.target === el) cbHide(); };
+  M.actions['w1-cb-claim'] = async (el) => {
+    el.disabled = true;
+    try {
+      const r = await post('/api/v2/comeback/claim');
+      haptic('success'); ok('👋 ' + r.message); U.after(r);
+      cbHide();
+      if (W.sum) W.sum.comeback = { available: false };
+      await loadSum(true);
+    } catch (e) { fail(e); el.disabled = false; cbHide(); loadSum(true); }
+  };
 
   // ==========================================================
   //  👥 «Лента ставок игроков»: ставки ВСЕХ игроков всех видов (исходы, тоталы, форы, счёт, экспрессы),
@@ -625,7 +674,7 @@
   // ==========================================================
   //  Журнал: подписи для новых видов операций
   // ==========================================================
-  const KIND = { freebet: ['🎁', 'Фрибет'], freebet_stake: ['🎁', 'Фрибет: сумма жетона'], acca_boost: ['🔥', 'Бонус к экспрессу'], pass_reward: ['🎟', 'Сезонный пропуск'], pass_buy: ['👑', 'Премиум-пропуск'] };
+  const KIND = { freebet: ['🎁', 'Фрибет'], freebet_stake: ['🎁', 'Фрибет: сумма жетона'], acca_boost: ['🔥', 'Бонус к экспрессу'], pass_reward: ['🎟', 'Сезонный пропуск'], pass_buy: ['👑', 'Премиум-пропуск'], comeback: ['👋', 'Бонус за возвращение'] };
   const ledger = $('ledger-list');
   if (ledger) {
     const fix = () => $$('#ledger-list .tx').forEach((tx) => {

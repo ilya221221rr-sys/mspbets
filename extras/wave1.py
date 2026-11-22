@@ -4,6 +4,7 @@ extras/wave1.py — подключение «первой волны» MSP 3.0:
   * accaperks.py  — бонус к экспрессу (+5% … +50%) и страховка экспресса (фрибет, если не зашло одно событие);
   * freebets.py   — фрибеты: ставка без списания баланса, игроку — чистый выигрыш;
   * seasonpass.py — сезонный пропуск: 30 уровней за ставки месяца (1-й — 50 000 PTS, каждый следующий +5 000), бесплатная и премиум-дорожки;
+  * comeback.py   — бонус за возвращение (3+ дня без ставок): 100к PTS, с 7 дней + фрибет, с 14 — больше; одно напоминание в Telegram;
   * betcards.py   — ставки на новые рынки в общей «Истории ставок», карточка ставки, «Поделиться» ссылкой.
 
 Подключается из extras/__init__.py тремя вызовами: wave1.init(), wave1.register(app), wave1.scheduler().
@@ -17,14 +18,14 @@ import time
 
 from fastapi import APIRouter, Request
 
-from . import accaperks, betcards, core, freebets, plus, seasonpass
+from . import accaperks, betcards, comeback, core, freebets, plus, seasonpass
 from .core import auth, db
 
 log = logging.getLogger("mspbets.wave1")
 router = APIRouter(prefix="/api/v2/wave1")
 
-ROUTERS = (router, accaperks.router, freebets.router, seasonpass.router, betcards.router)
-SCHEMA = [*freebets.SCHEMA, *accaperks.SCHEMA, *seasonpass.SCHEMA]
+ROUTERS = (router, accaperks.router, freebets.router, seasonpass.router, betcards.router, comeback.router)
+SCHEMA = [*freebets.SCHEMA, *accaperks.SCHEMA, *seasonpass.SCHEMA, *comeback.SCHEMA]
 TICK = 60
 
 
@@ -48,7 +49,9 @@ def summary(request: Request):
     with db() as conn:
         fbs = freebets.active(conn, uid)
         s, pts, lvl, prem, claimed = seasonpass._state(conn, uid)
-    return {"rules": accaperks.rules(), "freebets": fbs,
+        cb = comeback.offer(conn, uid)
+    cb.pop("last_bet", None)
+    return {"rules": accaperks.rules(), "freebets": fbs, "comeback": cb,
             "pass": {"title": s["title"], "level": lvl, "max_level": seasonpass.MAX_LEVEL, "points": pts["points"],
                      "level_points": seasonpass.progress(pts["points"], lvl)[1], "into_level": seasonpass.progress(pts["points"], lvl)[0], "premium": prem, "ends_at": s["end"],
                      "claimable": len(seasonpass._claimable(lvl, prem, claimed))}}
@@ -64,6 +67,10 @@ def tick():
         n += accaperks.process(plus.meta_get)
     except Exception as e:
         log.warning("wave1 perks: %s", e)
+    try:
+        n += comeback.remind(plus.meta_get, plus.meta_set)
+    except Exception as e:
+        log.warning("wave1 comeback: %s", e)
     return n
 
 

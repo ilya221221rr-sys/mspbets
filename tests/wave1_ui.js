@@ -259,6 +259,31 @@ async function open(uid, name, startParam) {
   const top = ($$('#history-list .hist')[0] || {}).textContent || '';
   check('в истории экспресс с меткой «🎁 Фрибет»', /Экспресс/.test(top) && /Фрибет/.test(top), top.replace(/\s+/g, ' ').slice(0, 120));
 
+  console.log('\n== бонус за возвращение');
+  const back = asUser(1001, 'Возвращенец');
+  await back.get('/api/me');
+  const ago5 = new Date(Date.now() - 5 * 864e5).toISOString();
+  sql(`INSERT INTO transactions (user_id, amount, balance_after, kind, note, created_at) VALUES (1001, -30000, 0, 'bet', 'старая ставка', '${ago5}')`);
+  const C = await open(1001, 'Возвращенец');
+  await sleep(1800);
+  check('при входе окно «С возвращением!»: 5 дней, +100 000 PTS', !C.$('w1-cb-modal').classList.contains('hidden') && /С возвращением/.test(C.$('w1-cb-body').textContent) && /5 дней/.test(C.$('w1-cb-body').textContent) && /\+100\s000/.test(C.$('w1-cb-body').textContent), C.$('w1-cb-modal') && C.$('w1-cb-body').textContent.slice(0, 160));
+  C.$$('[data-action="w1-cb-later"]')[0].click(); await sleep(200);
+  check('«Позже» закрывает окно', C.$('w1-cb-modal').classList.contains('hidden'));
+  await C.M.showTab('bonus'); await sleep(1200);
+  const cbb = C.$$('#w1-pass-bonus .w1-cb-banner')[0];
+  check('в «Бонусах» баннер «Бонус за возвращение»', !!cbb && /Бонус за возвращение/.test(cbb.textContent) && /100\s000/.test(cbb.textContent));
+  const cbal = num(C.$('balance').textContent);
+  cbb.click(); await sleep(300);
+  check('баннер снова открывает окно', !C.$('w1-cb-modal').classList.contains('hidden'));
+  C.$$('[data-action="w1-cb-claim"]')[0].click(); await sleep(2200);
+  check('«Забрать бонус»: +100 000 на баланс, окно закрыто', num(C.$('balance').textContent) >= cbal + 100000 && C.$('w1-cb-modal').classList.contains('hidden'), `${cbal} → ${C.$('balance').textContent}`);
+  await C.M.showTab('bonus'); await sleep(1200);
+  check('после получения баннера больше нет', !C.$$('#w1-pass-bonus .w1-cb-banner').length);
+  check('повторно забрать нельзя (раз в неделю)', (await back.post('/api/v2/comeback/claim')).status === 400);
+  await C.M.showTab('ledger'); await sleep(900);
+  check('в журнале «👋 Бонус за возвращение»', /Бонус за возвращение/.test(C.$('ledger-list').textContent));
+  check('у активного игрока окна возвращения нет', !$('w1-cb-modal') || $('w1-cb-modal').classList.contains('hidden'));
+
   console.log(errors.length ? '\nОшибки JS:\n' + errors.join('\n') : '\nОшибок JS нет');
   check('нет ошибок JS', errors.length === 0);
   console.log(`\nИтог: ${okc} ✓, ${bad} ✗`);
