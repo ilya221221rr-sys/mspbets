@@ -15,8 +15,8 @@ import html
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from . import betting, core, markets, mexpress
-from .core import all_, auth, db, one, touch_user, user_lock
+from . import betting, core, markets, mexpress, plusdb
+from .core import all_, auth, db, one, user_lock
 
 router = APIRouter(prefix="/api/v2/betlog")
 
@@ -158,7 +158,7 @@ def copy(request: Request, body: dict = Body(...)):
     if not table:
         raise HTTPException(400, "Неверный вид ставки")
     with user_lock(uid), db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         r = one(conn, f"SELECT t.user_id, COALESCE(pr.hide_bets,0) FROM {table} t LEFT JOIN profiles pr ON pr.user_id=t.user_id WHERE t.id=?", (bid,))
         if not r or r[1]:
             raise HTTPException(404, "Ставка недоступна")

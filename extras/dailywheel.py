@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
-from . import core
-from .core import all_, auth, db, money, now_iso, one, touch_user, user_lock
+from . import core, plusdb
+from .core import all_, auth, db, money, now_iso, one, user_lock
 
 router = APIRouter(prefix="/api/v2/dailywheel")
 
@@ -94,7 +94,7 @@ def spin(request: Request):
     uid = int(user["id"])
     day = core.today()
     with user_lock(uid), db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         if one(conn, "SELECT 1 FROM daily_wheel WHERE user_id=? AND day=?", (uid, day)):
             raise HTTPException(400, "Колесо уже крутили сегодня — приходи завтра")
         i = pick_sector()

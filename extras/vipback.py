@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
-from . import core
-from .core import all_, auth, db, now_iso, one, touch_user, user_lock
+from . import core, plusdb
+from .core import all_, auth, db, now_iso, one, user_lock
 
 router = APIRouter(prefix="/api/v2/vipback")
 
@@ -33,6 +33,8 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS vip_cashback (
         user_id INTEGER NOT NULL, week TEXT NOT NULL, amount INTEGER NOT NULL, claimed_at TEXT NOT NULL,
         PRIMARY KEY (user_id, week))""",
+    # кэшбэк считает проигрыш за неделю по created_at — без индекса просматривалась вся история игрока
+    "CREATE INDEX IF NOT EXISTS idx_tx_user_time ON transactions(user_id, created_at)",
 ]
 
 _meta_get = None
@@ -107,7 +109,7 @@ def status(request: Request):
     user = auth(request)
     uid = int(user["id"])
     with db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         vip, lvl = _vip(conn, uid)
         rb = _rakeback(conn, uid, vip)
         cb = _cashback(conn, uid, vip)
@@ -124,7 +126,7 @@ def claim_rakeback(request: Request):
     user = auth(request)
     uid = int(user["id"])
     with user_lock(uid), db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         vip, _ = _vip(conn, uid)
         rb = _rakeback(conn, uid, vip)
         if rb["available"] < 1:
@@ -143,7 +145,7 @@ def claim_cashback(request: Request):
     user = auth(request)
     uid = int(user["id"])
     with user_lock(uid), db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         vip, _ = _vip(conn, uid)
         cb = _cashback(conn, uid, vip)
         if cb["claimed"]:

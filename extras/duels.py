@@ -27,8 +27,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from . import core
-from .core import all_, auth, db, money, now_iso, one, touch_user, user_lock
+from . import core, plusdb
+from .core import all_, auth, db, money, now_iso, one, user_lock
 
 router = APIRouter(prefix="/api/v2/duels")
 
@@ -184,7 +184,7 @@ def create(request: Request, body: dict = Body(...)):
     amount = core.check_amount(body.get("amount"), MIN_BET, MAX_BET)
     private = 1 if body.get("private") else 0
     with user_lock(uid), db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         n_open = one(conn, "SELECT COUNT(*) FROM duels WHERE creator_id=? AND status='open'", (uid,))[0]
         if n_open >= MAX_OPEN:
             raise HTTPException(400, f"Не больше {MAX_OPEN} открытых вызовов")
@@ -227,7 +227,7 @@ def join(request: Request, body: dict = Body(...)):
     if not code:
         raise HTTPException(400, "Укажите код дуэли")
     with user_lock(uid), db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         r = one(conn, f"SELECT {_COLS} FROM duels WHERE code=?", (code,))
         if not r:
             raise HTTPException(404, "Дуэль не найдена")

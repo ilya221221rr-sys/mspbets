@@ -115,6 +115,47 @@ def settle(adm, eid, result, score=None):
 markets._espn_score = lambda *a, **k: None  # без сети: счёт только из match_scores
 
 
+class Track:
+    """Обёртка соединения: считает открытые транзакции записи (в Turso они держат блокировку всей базы)."""
+    open_tx = 0
+    writes = []
+
+    def __init__(self, c):
+        self._c, self._w = c, False
+
+    def execute(self, q, *a, **k):
+        if q.lstrip()[:7].upper().startswith(("INSERT", "UPDATE", "DELETE", "REPLACE")):
+            Track.writes.append(" ".join(q.split()[:3]))
+            if not self._w:
+                self._w = True
+                Track.open_tx += 1
+        return self._c.execute(q, *a, **k)
+
+    def _end(self):
+        if self._w:
+            self._w = False
+            Track.open_tx -= 1
+
+    def commit(self):
+        self._end()
+        return self._c.commit()
+
+    def rollback(self):
+        self._end()
+        return self._c.rollback()
+
+    def close(self):
+        self._end()
+        return self._c.close()
+
+    def __getattr__(self, n):
+        return getattr(self._c, n)
+
+
+_plain_get_db = core.ctx.get_db
+core.ctx.get_db = lambda: Track(_plain_get_db())
+
+
 def item(eid, u, market, pick):
     d = u.get(f"/api/v2/markets/event/{eid}").json()
     if market == "1x2":
@@ -317,6 +358,52 @@ with TestClient(A.app) as c:
     check("крупные выигрыши в ленте колеса", any(x["prize"] == 500000 and x["name"] == "Боб" for x in g.get("/api/v2/dailywheel").json()["big_wins"]))
     check("вращение не даёт XP (это не ставка)", sql("select xp from profiles where user_id=300", fetch=True)[0][0] == 0)
     journal_ok(300, "колесо")
+
+    print("\n== короткие транзакции Turso (зависание «Бонусов», SQLITE_BUSY)")
+    gets = ["/api/v2/vipback", "/api/v2/dailywheel", "/api/v2/duels", "/api/v2/duels/pulse", "/api/v2/jackpot",
+            "/api/v2/markets/available", f"/api/v2/markets/event/{fb}", "/api/v2/markets/my", "/api/v2/mexpress/my",
+            "/api/v2/betlog/player/200", "/api/v2/betlog/feed", "/api/v2/roulette/history", "/api/v2/roulette/config"]
+    for u in gets:
+        a.get(u)  # прогрев (первый вход игрока может создать профиль)
+    Track.writes.clear()
+    codes = {u: a.get(u).status_code for u in gets}
+    check("GET-эндпоинты plus отвечают 200", all(v == 200 for v in codes.values()), codes)
+    check("GET-эндпоинты plus ничего не пишут — не берут блокировку записи Turso", Track.writes == [], Track.writes)
+    from extras import plusdb
+    plusdb.forget(100)
+    Track.writes.clear()
+    a.get("/api/v2/vipback")
+    check("vipback: известный игрок не открывает транзакцию даже после сброса кэша", Track.writes == [], Track.writes)
+    plusdb.forget()
+    Track.writes.clear()
+    nu = U(c, 777, "Новичок")
+    r = nu.get("/api/v2/vipback")
+    check("vipback: новый игрок регистрируется (баланс 1000) отдельной короткой записью",
+          r.status_code == 200 and nu.bal() == 1000 and all(w.startswith("INSERT OR IGNORE") for w in Track.writes) and Track.writes, Track.writes)
+    check("индекс transactions(user_id, created_at) для кэшбэка",
+          bool(sql("select 1 from sqlite_master where type='index' and name='idx_tx_user_time'", fetch=True)))
+    # Запрос счёта к ESPN — только без открытой транзакции записи
+    f2 = new_event("Футбол", "soccer/esp.1", "Реал", "Барселона", (2.4, 3.5, 2.8), "espn:soccer/esp.1:t1")
+    f3 = new_event("Футбол", "soccer/ita.1", "Милан", "Интер", (2.6, 3.3, 2.7), "espn:soccer/ita.1:t2")
+    t_f2 = item(f2, b, "total:2.5", "over")
+    rb = b.post("/api/v2/markets/bet", {"event_id": f2, "market": "total:2.5", "pick": "over", "amount": 100, "odds": t_f2["odds"]})
+    rx = b.post("/api/v2/mexpress/bet", {"amount": 100, "legs": [leg(f2, b, "total:2.5", "over"), leg(f3, b, "btts", "yes")]})
+    check("ставки для проверки расчёта приняты", rb.status_code == 200 and rx.status_code == 200, rb.text + rx.text)
+    settle(adm, f2, "1"); settle(adm, f3, "1")
+    seen = []
+    def spy(conn, ev, cache):
+        seen.append((ev["id"], Track.open_tx))
+        return (2, 1)
+    markets._espn_score = spy
+    try:
+        markets.settle_pending(); mexpress.settle_pending()
+    finally:
+        markets._espn_score = lambda *a, **k: None
+    check("счёт запрошен с ESPN для обоих матчей", {e for e, _ in seen} == {f2, f3}, seen)
+    check("во время сетевого запроса нет открытых транзакций записи", seen and all(o == 0 for _, o in seen), seen)
+    check("ставка на тотал рассчитана по счёту ESPN", sql("select status, score from market_bets where id=?", (rb.json()["id"],), fetch=True) == [("won", "2:1")])
+    check("экспресс+ рассчитан по счёту ESPN", sql("select status from mx_bets where id=?", (rx.json()["id"],), fetch=True)[0][0] == "won")
+    check("счета сохранены в match_scores", sql(f"select count(*) from match_scores where event_id in ({f2},{f3}) and source='espn'", fetch=True)[0][0] == 2)
 
     print("\n== фронтенд")
     js = c.get("/web/plus.js").text

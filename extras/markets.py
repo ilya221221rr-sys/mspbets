@@ -29,8 +29,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from . import core
-from .core import all_, auth, db, money, now_iso, one, touch_user, user_lock
+from . import core, plusdb
+from .core import all_, auth, db, money, now_iso, one, user_lock
 
 log = logging.getLogger("mspbets.markets")
 router = APIRouter(prefix="/api/v2/markets")
@@ -521,7 +521,7 @@ def place_bet(request: Request, body: dict = Body(...)):
         raise HTTPException(400, "Неверные данные")
     amount = core.check_amount(body.get("amount"), 1, MAX_BET)
     with user_lock(uid), db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         bid, item = place_market_bet(conn, uid, event_id, market, pick, amount, seen_odds)
         bal = core.balance_of(conn, uid)
     return {"ok": True, "id": bid, "odds": item["odds"], "label": item["label"], "balance": bal,
@@ -595,6 +595,35 @@ def settle_event_bets(conn, event_id, h=None, a=None, void=False):
     return notes
 
 
+def prefetch_scores(eids, cache=None):
+    """Подтянуть с ESPN итоговые счета рассчитанных матчей и сохранить в match_scores.
+
+    Сетевой запрос — строго ВНЕ транзакции записи: Turso держит блокировку записи, пока транзакция
+    открыта, и запрос к ESPN внутри неё «вешал» все остальные запросы игроков (SQLITE_BUSY).
+    Возвращает число сохранённых счетов."""
+    cache = {} if cache is None else cache
+    need = []
+    with db() as conn:  # только чтения — транзакция не открывается
+        for eid in eids:
+            ev = _event_info(conn, eid)
+            if (ev and ev["status"] == "settled" and ev["result"] != "void" and ev["source"] == "espn"
+                    and not one(conn, "SELECT 1 FROM match_scores WHERE event_id=?", (eid,))):
+                need.append(ev)
+    saved = 0
+    for ev in need:
+        try:
+            sc = _espn_score(None, ev, cache)
+        except Exception as e:
+            log.info("markets score %s: %s", ev["id"], e)
+            continue
+        if sc:
+            with db() as conn:  # одна короткая запись
+                conn.execute("INSERT OR IGNORE INTO match_scores (event_id, home, away, source, created_at) VALUES (?,?,?,?,?)",
+                             (ev["id"], sc[0], sc[1], "espn", now_iso()))
+            saved += 1
+    return saved
+
+
 def settle_pending():
     """Фоновая задача: рассчитать доп. рынки по завершённым матчам."""
     with db() as conn:
@@ -602,6 +631,7 @@ def settle_pending():
     if not ids:
         return 0
     cache, done = {}, 0
+    prefetch_scores(ids, cache)  # сеть — до транзакций
     now = datetime.now(timezone.utc)
     for eid in ids:
         try:
@@ -613,11 +643,6 @@ def settle_pending():
                     notes = settle_event_bets(conn, eid, void=True)
                 elif ev["status"] == "settled":
                     sc = one(conn, "SELECT home, away FROM match_scores WHERE event_id=?", (eid,))
-                    if not sc:
-                        sc = _espn_score(conn, ev, cache)
-                        if sc:
-                            conn.execute("INSERT OR IGNORE INTO match_scores (event_id, home, away, source, created_at) VALUES (?,?,?,?,?)",
-                                         (eid, sc[0], sc[1], "espn", now_iso()))
                     if sc:
                         notes = settle_event_bets(conn, eid, sc[0], sc[1])
                     elif ev["starts_at"] and now - datetime.fromisoformat(ev["starts_at"]) > timedelta(days=5):

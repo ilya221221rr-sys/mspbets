@@ -899,7 +899,8 @@
         </div>`;
     } catch (e) { box.innerHTML = ''; }
   }
-  M.tabs.bonus = ((orig) => async () => { const p = vbRender(); if (orig) await orig(); await p; })(M.tabs.bonus);
+  // VIP-блок грузится параллельно и не задерживает основной экран «Бонусов» (и кнопку «Забрать бонус»)
+  M.tabs.bonus = ((orig) => async () => { vbRender(); if (orig) await orig(); })(M.tabs.bonus);
   M.actions['vb-rb'] = async (el) => { el.disabled = true; try { const r = await post('/api/v2/vipback/rakeback'); ok(`Рейкбек +${fmt(r.amount)} PTS`); U.setBal(r.balance); } catch (e) { fail(e); } vbRender(); };
   M.actions['vb-cb'] = async (el) => { el.disabled = true; try { const r = await post('/api/v2/vipback/cashback'); ok(`Кэшбэк +${fmt(r.amount)} PTS`); U.setBal(r.balance); } catch (e) { fail(e); } vbRender(); };
   M.actions['vb-info'] = () => dialog({
@@ -944,15 +945,16 @@
     const h = Math.floor(left / 36e5), m = Math.floor(left % 36e5 / 6e4), sec = Math.floor(left % 6e4 / 1e3);
     return [h, m, sec].map((x) => String(x).padStart(2, '0')).join(':');
   }
+  const setHtml = (el, html) => { if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html; } };
   function dwBadges() { // карточка в «Играх» и баннер в «Бонусах»
     const st = DW.st; if (!st) return;
     const sub = st.available ? '🎁 Доступно бесплатное вращение!' : `Следующее через ${dwCountdown()}`;
     const hc = document.querySelector('#games .hub [data-tab="dwheel"] .hub-sub');
-    if (hc) hc.textContent = `${sub} · до 500 000 PTS`;
+    if (hc && hc.textContent !== `${sub} · до 500 000 PTS`) hc.textContent = `${sub} · до 500 000 PTS`;
     const card = document.querySelector('#games .hub [data-tab="dwheel"]');
     if (card) card.classList.toggle('dw-ready', !!st.available);
     const bb = $('dw-bonus');
-    if (bb) bb.innerHTML = `<button type="button" class="dw-banner${st.available ? ' ready' : ''}" data-tab="dwheel"><span class="dw-b-ic">🎡</span><span class="dw-b-t"><b>Ежедневное колесо</b><small>${st.available ? 'Крути бесплатно — от 20 000 до 500 000 PTS' : st.today ? `Сегодня выпало ${fmt(st.today.prize)} PTS · следующее через ${dwCountdown()}` : `Следующее через ${dwCountdown()}`}</small></span><span class="dw-b-go">${st.available ? 'Крутить' : '→'}</span></button>`;
+    if (bb) setHtml(bb, `<button type="button" class="dw-banner${st.available ? ' ready' : ''}" data-tab="dwheel"><span class="dw-b-ic">🎡</span><span class="dw-b-t"><b>Ежедневное колесо</b><small>${st.available ? 'Крути бесплатно — от 20 000 до 500 000 PTS' : st.today ? `Сегодня выпало ${fmt(st.today.prize)} PTS · следующее через ${dwCountdown()}` : `Следующее через ${dwCountdown()}`}</small></span><span class="dw-b-go">${st.available ? 'Крутить' : '→'}</span></button>`);
   }
   function dwRender() {
     const st = DW.st; if (!st) return;
@@ -979,16 +981,24 @@
     }
     dwBadges();
   }
-  async function dwLoad() {
-    try { DW.st = await api('/api/v2/dailywheel'); dwRender(); } catch (e) { if (visible('dwheel')) fail(e); }
+  let dwBusy = null, dwAt = 0;
+  function dwLoad(force) {
+    if (dwBusy) return dwBusy; // не дублируем параллельные запросы
+    if (!force && Date.now() - dwAt < 3000 && DW.st) { dwRender(); return Promise.resolve(); }
+    dwBusy = api('/api/v2/dailywheel').then((st) => { DW.st = st; dwAt = Date.now(); dwRender(); })
+      .catch((e) => { dwAt = Date.now(); if (visible('dwheel')) fail(e); })
+      .finally(() => { dwBusy = null; });
+    return dwBusy;
   }
+  // Если часы телефона спешат, next_at «уже наступил», а сервер говорит «ещё нет» — не опрашиваем чаще раза в минуту
+  const dwDue = () => DW.st && !DW.st.available && new Date(DW.st.next_at) <= Date.now() && Date.now() - dwAt > 60000;
   M.tabs.dwheel = async () => {
     navTo('bonus');
     await dwLoad();
     clearInterval(DW.timer);
     DW.timer = setInterval(() => {
       if (!visible('dwheel')) { clearInterval(DW.timer); return; }
-      if (DW.st && !DW.st.available && new Date(DW.st.next_at) <= Date.now()) { $('dw-wheel').dataset.placed = ''; dwLoad(); return; }
+      if (dwDue()) { $('dw-wheel').dataset.placed = ''; dwLoad(true); return; }
       if (DW.st && !DW.st.available && !DW.spinning) $('dw-next').querySelector('b:last-child').textContent = dwCountdown();
     }, 1000);
   };
@@ -1014,7 +1024,7 @@
       haptic('success');
       U.setBal(r.balance); U.touchMe();
       DW.st = { ...DW.st, available: false, today: { sector: r.sector, prize: r.prize }, next_at: r.next_at, stats: { spins: DW.st.stats.spins + 1, total: DW.st.stats.total + r.prize, best: Math.max(DW.st.stats.best, r.prize) } };
-    } catch (e) { fail(e); dwLoad(); }
+    } catch (e) { fail(e); dwLoad(true); }
     finally { DW.spinning = false; btn.disabled = false; btn.textContent = 'Крутить бесплатно'; dwRender(); }
   };
   if (hub) {
@@ -1022,9 +1032,9 @@
   }
   const bonusBox = $('bonus-body');
   if (bonusBox) bonusBox.insertAdjacentHTML('beforebegin', '<div id="dw-bonus"></div>');
-  M.tabs.bonus = ((orig) => async () => { const p = dwLoad(); if (orig) await orig(); await p; })(M.tabs.bonus);
+  M.tabs.bonus = ((orig) => async () => { dwLoad(); if (orig) await orig(); })(M.tabs.bonus);
   setTimeout(dwLoad, 1500);
-  setInterval(() => { if (DW.st && (visible('games') || visible('bonus'))) { if (!DW.st.available && new Date(DW.st.next_at) <= Date.now()) dwLoad(); else dwBadges(); } }, 1000);
+  setInterval(() => { if (DW.st && (visible('games') || visible('bonus'))) { if (dwDue()) dwLoad(true); else dwBadges(); } }, 1000);
 
   // ==========================================================
   //  ЖУРНАЛ: подписи для новых видов операций

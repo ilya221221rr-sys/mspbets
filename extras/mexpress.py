@@ -23,8 +23,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from . import core, markets
-from .core import all_, auth, db, money, now_iso, one, touch_user, user_lock
+from . import core, markets, plusdb
+from .core import all_, auth, db, money, now_iso, one, user_lock
 
 log = logging.getLogger("mspbets.mexpress")
 router = APIRouter(prefix="/api/v2/mexpress")
@@ -108,7 +108,7 @@ def bet(request: Request, body: dict = Body(...)):
     legs = _parse_legs(body.get("legs"))
     amount = core.check_amount(body.get("amount"), 1, MAX_BET)
     with user_lock(uid), db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         bid, total, priced = place(conn, uid, amount, legs)  # 409 → фронт запросит /quote и обновит купон
         bal = core.balance_of(conn, uid)
     return {"ok": True, "id": bid, "total_odds": total, "potential": core.pay(amount, total), "balance": bal,
@@ -166,20 +166,9 @@ def my(request: Request, limit: int = 30):
 # Расчёт
 # ------------------------------------------------------------------
 def _score(conn, ev, cache):
+    """Счёт из match_scores. С ESPN его заранее, вне транзакции, подтягивает markets.prefetch_scores."""
     sc = one(conn, "SELECT home, away FROM match_scores WHERE event_id=?", (ev["id"],))
-    if sc:
-        return sc[0], sc[1]
-    if ev["source"] != "espn":
-        return None
-    try:
-        sc = markets._espn_score(conn, ev, cache)
-    except Exception as e:
-        log.info("mexpress score %s: %s", ev["id"], e)
-        return None
-    if sc:
-        conn.execute("INSERT OR IGNORE INTO match_scores (event_id, home, away, source, created_at) VALUES (?,?,?,?,?)",
-                     (ev["id"], sc[0], sc[1], "espn", now_iso()))
-    return sc
+    return (sc[0], sc[1]) if sc else None
 
 
 def _grade_event_legs(conn, eid, cache, now):
@@ -261,6 +250,8 @@ def settle_pending():
         eids = [r[0] for r in all_(conn, """SELECT DISTINCT l.event_id FROM mx_legs l JOIN mx_bets b ON b.id=l.bet_id
                                           WHERE l.status='pending' AND b.status='pending'""")]
     cache, now, done = {}, datetime.now(timezone.utc), 0
+    if eids:
+        markets.prefetch_scores(eids, cache)  # сеть — до транзакций
     for eid in eids:
         try:
             with db() as conn:

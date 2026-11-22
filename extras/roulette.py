@@ -13,8 +13,8 @@ import json
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from . import core
-from .core import RNG, all_, auth, db, touch_user, user_lock
+from . import core, plusdb
+from .core import RNG, all_, auth, db, user_lock
 
 router = APIRouter(prefix="/api/v2/roulette")
 
@@ -101,7 +101,7 @@ def spin(request: Request, body: dict = Body(...)):
     if total > MAX_BET:
         raise HTTPException(400, f"Максимум {core.money(MAX_BET)} PTS за спин")
     with user_lock(uid), db() as conn:
-        touch_user(conn, user)
+        plusdb.ensure_user(user)
         core.game_bet(conn, uid, total, "roulette", f"Ставка: Рулетка ({len(bets)} поз.)")
         n = RNG.randrange(37)
         payout, wins = 0, []

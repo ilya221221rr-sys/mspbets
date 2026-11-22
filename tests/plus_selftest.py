@@ -319,11 +319,11 @@ with TestClient(A.app) as c:
         def random(self): return 0.0
     JP.RNG = Hit()
     a.post("/api/v2/roulette/spin", {"bets": [{"key": "black", "amount": 1000}]})
-    ba = a.bal()
+    ba, tj = a.bal(), last_tx()
     check("срыв джекпота", plus.jackpot_tick() == 1)  # (сам срыв не даёт XP — бонусов уровня тут нет)
     st = a.get("/api/v2/jackpot").json()
     won = st["unseen"][0]
-    check(f"сорван Grand (одна ставка — один уровень): +{won['amount']}", won["tier"] == "grand" and won["amount"] == jp3["grand"] + 5 and a.bal() == ba + won["amount"], st)
+    check(f"сорван Grand (одна ставка — один уровень): +{won['amount']}", won["tier"] == "grand" and won["amount"] == jp3["grand"] + 5 and a.bal() == ba + won["amount"] + bonus(100, tj), st)  # «Крупный куш» может дать +1000
     check("банк Grand сброшен до стартового", next(t for t in st["tiers"] if t["key"] == "grand")["amount"] == 500000)
     check("победитель в ленте", st["recent"][0]["name"] == "Алиса")
     check("в журнале вид jackpot", sql("select count(*) from transactions where user_id=100 and kind='jackpot'", fetch=True)[0][0] == 1)
