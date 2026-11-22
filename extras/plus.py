@@ -5,7 +5,6 @@ extras/plus.py — подключение новых модулей «казин
   * roulette.py — европейская рулетка;
   * duels.py    — дуэли 1 на 1 между игроками;
   * jackpot.py  — прогрессивный джекпот Mini / Major / Grand;
-  * vipback.py  — VIP-кэшбэк и рейкбек;
   * mexpress.py — экспресс с доп. рынками (тоталы, форы, точный счёт + П1/X/П2);
   * betlog.py   — единая лента ставок игрока (все виды ставок в профиле и «Ленте ставок»);
   * dailywheel.py — ежедневное колесо фортуны (20 000 — 500 000 PTS раз в сутки).
@@ -19,18 +18,18 @@ import logging
 import os
 import time
 
-from . import betlog, core, dailywheel, duels, jackpot, markets, mexpress, roulette, vipback
+from . import betlog, core, dailywheel, duels, jackpot, markets, mexpress, roulette
 from .core import one
 
 log = logging.getLogger("mspbets.plus")
 
-ROUTERS = (markets.router, roulette.router, duels.router, jackpot.router, vipback.router,
+ROUTERS = (markets.router, roulette.router, duels.router, jackpot.router,
            mexpress.router, betlog.router, dailywheel.router)
 BG = os.getenv("PLUS_BG", "1") not in ("0", "false", "False", "")
 
 SCHEMA = [
     "CREATE TABLE IF NOT EXISTS plus_meta (key TEXT PRIMARY KEY, value TEXT)",
-    *markets.SCHEMA, *duels.SCHEMA, *jackpot.SCHEMA, *vipback.SCHEMA,
+    *markets.SCHEMA, *duels.SCHEMA, *jackpot.SCHEMA,
     *mexpress.SCHEMA, *dailywheel.SCHEMA,
 ]
 
@@ -59,7 +58,6 @@ def init():
             conn.execute(s)
     with core.db() as conn:
         jackpot.init(conn, meta_get, meta_set)
-        vipback.init(conn, meta_get, meta_set)
 
 
 def register(app):
