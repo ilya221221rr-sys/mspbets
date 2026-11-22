@@ -427,7 +427,7 @@ def available(request: Request):
 
 
 def _bet_row(r):
-    return {"id": r[0], "event_id": r[1], "market": r[2], "pick": r[3], "label": r[4], "amount": r[5], "odds": r[6],
+    return {"id": r[0], "event_id": r[1], "market": r[2], "pick": r[3], "label": r[4], "full_label": full_label(r[2], r[4]), "amount": r[5], "odds": r[6],
             "status": r[7], "payout": r[8], "score": r[9], "created_at": r[10], "settled_at": r[11],
             "title": r[12] if len(r) > 12 else None, "sport": r[13] if len(r) > 13 else None}
 
@@ -449,9 +449,64 @@ def event_markets(event_id: int, request: Request):
         "event_id": ev["id"], "title": ev["title"], "sport": ev["sport"], "league": ev["league"], "starts_at": ev["starts_at"],
         "home": ev["home"], "away": ev["away"], "open": open_, "kind": ev["kind"],
         "groups": _public_groups(markets_for(ev)) if open_ else [],
+        "main": main_items(ev) if open_ else [],
         "rules": RULES.get(ev["kind"] or "", ""), "margin": round(MARGIN * 100, 1),
         "my_bets": [_bet_row(r) for r in mine], "max_bet": MAX_BET,
     }
+
+
+def main_items(ev):
+    """Основной исход матча (П1 / X / П2) в формате рынков — для экспресса с рынками."""
+    if not ev:
+        return []
+    out = []
+    for pick, odds, label in (("1", ev["o1"], f"П1 · {ev['home']}"), ("X", ev["ox"], "Ничья"), ("2", ev["o2"], f"П2 · {ev['away']}")):
+        try:
+            odds = round(float(odds), 2)
+        except (TypeError, ValueError):
+            continue
+        if odds > 1:
+            out.append({"market": "1x2", "pick": pick, "label": label, "odds": odds})
+    return out
+
+
+MARKET_TITLES = {"dc": "Двойной шанс", "total": "Тотал", "hcp": "Фора", "btts": "Обе забьют", "it1": "Инд. тотал", "it2": "Инд. тотал", "cs": "Точный счёт"}
+
+
+def full_label(market, label):
+    """Подпись с названием рынка — для экспрессов, профилей и ленты: «Тотал: Больше 2.5», «Обе забьют: Да»."""
+    t = MARKET_TITLES.get(str(market).split(":")[0])
+    if not t or str(label).startswith(t):
+        return label
+    return f"{t} {label}" if market == "cs" else f"{t}: {label}"
+
+
+def find_item(ev, market, pick):
+    """Исход по ключу рынка (включая основной «1x2») с текущим коэффициентом или None."""
+    if market == "1x2":
+        return next((it for it in main_items(ev) if it["pick"] == pick), None)
+    return next((it for g in markets_for(ev) for it in g["items"] if it["market"] == market and it["pick"] == pick), None)
+
+
+def place_market_bet(conn, uid, event_id, market, pick, amount, seen_odds=None, note_prefix="Ставка"):
+    """Одинар на доп. рынок (внутри транзакции и user_lock вызывающего). Возвращает (id, item)."""
+    ev = _event_info(conn, event_id)
+    if not ev or ev["status"] != "open" or _started(ev["starts_at"]):
+        raise HTTPException(400, "Приём ставок закрыт")
+    item = None if market == "1x2" else find_item(ev, market, pick)
+    if not item:
+        raise HTTPException(400, "Рынок недоступен")
+    odds = item["odds"]
+    if seen_odds is not None and abs(seen_odds - odds) > 0.004:
+        raise HTTPException(409, f"Коэффициент изменился: {seen_odds:.2f} → {odds:.2f}")
+    core.adjust(conn, uid, -amount, "bet", f"{note_prefix}: {ev['title']} — {item['label']} (кф {odds:.2f})", ref=f"event:{event_id}")
+    bid = conn.execute(
+        "INSERT INTO market_bets (user_id, event_id, market, pick, label, amount, odds, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        (uid, event_id, market, pick, item["label"], amount, odds, now_iso()),
+    ).lastrowid
+    core.on_wager(conn, uid, amount, "match")
+    core.quest_event(conn, uid, "match_bet", 1)
+    return bid, item
 
 
 @router.post("/bet")
@@ -467,25 +522,10 @@ def place_bet(request: Request, body: dict = Body(...)):
     amount = core.check_amount(body.get("amount"), 1, MAX_BET)
     with user_lock(uid), db() as conn:
         touch_user(conn, user)
-        ev = _event_info(conn, event_id)
-        if not ev or ev["status"] != "open" or _started(ev["starts_at"]):
-            raise HTTPException(400, "Приём ставок закрыт")
-        item = next((it for g in markets_for(ev) for it in g["items"] if it["market"] == market and it["pick"] == pick), None)
-        if not item:
-            raise HTTPException(400, "Рынок недоступен")
-        odds = item["odds"]
-        if seen_odds is not None and abs(seen_odds - odds) > 0.004:
-            raise HTTPException(409, f"Коэффициент изменился: {seen_odds:.2f} → {odds:.2f}")
-        bal = core.adjust(conn, uid, -amount, "bet", f"Ставка: {ev['title']} — {item['label']} (кф {odds:.2f})", ref=f"event:{event_id}")
-        bid = conn.execute(
-            "INSERT INTO market_bets (user_id, event_id, market, pick, label, amount, odds, created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (uid, event_id, market, pick, item["label"], amount, odds, now_iso()),
-        ).lastrowid
-        core.on_wager(conn, uid, amount, "match")
-        core.quest_event(conn, uid, "match_bet", 1)
+        bid, item = place_market_bet(conn, uid, event_id, market, pick, amount, seen_odds)
         bal = core.balance_of(conn, uid)
-    return {"ok": True, "id": bid, "odds": odds, "label": item["label"], "balance": bal,
-            "potential": core.pay(amount, odds), "unlocked": core.pop_unlocked()}
+    return {"ok": True, "id": bid, "odds": item["odds"], "label": item["label"], "balance": bal,
+            "potential": core.pay(amount, item["odds"]), "unlocked": core.pop_unlocked()}
 
 
 @router.get("/my")

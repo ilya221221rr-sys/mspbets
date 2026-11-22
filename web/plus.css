@@ -152,3 +152,68 @@
   .jp-banner::before, .jp-rays, .jp-coins, .du-coin.spin, .du-dice span.roll { animation: none !important; }
 }
 .lite .jp-banner::before, .lite .jp-rays, .lite .jp-coins { animation: none !important; }
+
+/* ==========================================================
+   Вторая волна: дуэли у создателя, экспресс+, лента ставок, ежедневное колесо
+   ========================================================== */
+
+/* ---- дуэли: окно результата ---- */
+.du-head { font-size: 14px; margin-bottom: 4px; }
+.du-head small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.du-fair-btn { display: block; width: 100%; margin-top: 8px; padding: 6px; font-size: 12px; font-weight: 700; color: var(--muted); }
+#du-ok:disabled { opacity: .55; }
+
+/* ---- экспресс+ ---- */
+body.mx-on #express-panel { display: none !important; }
+.mx-panel { border-color: rgba(255, 201, 60, .45); box-shadow: 0 -8px 30px -10px rgba(255, 201, 60, .35), 0 10px 30px rgba(0, 0, 0, .45); }
+.mx-panel .express-badge { background: linear-gradient(135deg, #FFC93C, #f97316); color: #2a1a00; }
+.mx-panel .express-title small { font-size: 10.5px; color: var(--muted); font-weight: 700; margin-left: 4px; }
+.mx-panel .cart-item .c { max-width: 46%; }
+.mx-closed { opacity: .5; text-decoration: line-through; }
+.mx-warn { font-size: 11.5px; color: var(--gold); margin: 4px 0 8px; }
+.mx-hint { font-size: 12px; padding: 8px 10px; margin-bottom: 10px; border-radius: var(--r-md); background: rgba(255, 201, 60, .08); border: 1px solid rgba(255, 201, 60, .3); color: var(--muted); }
+.mx-hint b { color: var(--gold); }
+.mk-odd.in-mx { position: relative; border-color: rgba(255, 201, 60, .7); box-shadow: inset 0 0 0 1px rgba(255, 201, 60, .5); }
+.mk-odd.in-mx::after { content: '🚀'; position: absolute; top: 2px; right: 4px; font-size: 10px; }
+.mk-slip-btns { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; margin-top: 8px; }
+.mk-slip-btns .btn { margin-top: 0; }
+#mk-to-mx.on { color: var(--gold); border-color: rgba(255, 201, 60, .5); }
+.mk-btn.on { color: var(--gold); border-color: rgba(255, 201, 60, .5); background: rgba(255, 201, 60, .08); }
+
+/* ---- карточка ставки (профиль, лента, мои ставки) ---- */
+.bl-card .bl-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.bl-kind { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); }
+.bl-time { font-size: 11px; color: var(--muted); }
+.bl-leg { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px dashed var(--line); }
+.bl-leg:first-of-type { border-top: 0; }
+.bl-leg > div { flex: 1; min-width: 0; }
+.bl-leg small { display: block; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bl-leg b { font-size: 13px; overflow-wrap: anywhere; } .bl-leg b i { font-style: normal; color: var(--muted); font-weight: 600; }
+.bl-ic { width: 18px; text-align: center; font-size: 13px; }
+.bl-ic:empty { display: none; }
+.bl-o { font-family: var(--font-display); font-weight: 800; font-size: 13px; color: var(--primary-2); }
+.bl-card .feed-meta { margin-top: 4px; }
+
+/* ---- ежедневное колесо ---- */
+.dw-box { position: relative; width: min(300px, 84vw); aspect-ratio: 1; margin: 6px auto 8px; border-radius: 50%; box-shadow: 0 0 50px rgba(255, 201, 60, .3), inset 0 0 0 6px rgba(0, 0, 0, .25); }
+.dw-box svg { width: 100%; height: 100%; display: block; transition: transform 5s cubic-bezier(.12, .7, .08, 1); will-change: transform; }
+.lite .dw-box svg { transition-duration: 1.2s; }
+.dw-pin { position: absolute; left: 50%; top: -8px; transform: translateX(-50%); z-index: 2; border: 12px solid transparent; border-top: 22px solid var(--gold); filter: drop-shadow(0 0 8px var(--gold)); }
+.dw-hub { position: absolute; inset: 39%; display: grid; place-items: center; font-size: 30px; pointer-events: none; }
+.dw-spin { animation: dw-glow 1.6s ease-in-out infinite; }
+@keyframes dw-glow { 50% { box-shadow: 0 0 0 4px rgba(255, 201, 60, .25), 0 10px 30px rgba(255, 201, 60, .35); } }
+.dw-next { text-align: center; color: var(--muted); font-size: 13.5px; padding: 12px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--line); }
+.dw-next b { color: var(--text, #fff); font-family: var(--font-display); font-variant-numeric: tabular-nums; }
+.dw-next b.gold { color: var(--gold); }
+#dw-res.dw-big { color: var(--gold); text-shadow: 0 0 22px rgba(255, 201, 60, .5); }
+.dw-prizes { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+.dw-pr { display: flex; flex-direction: column; align-items: center; padding: 7px 4px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); border-top: 3px solid var(--c); }
+.dw-pr b { font-family: var(--font-display); font-size: 13px; } .dw-pr span { font-size: 11px; color: var(--muted); font-weight: 700; }
+.dw-card.dw-ready { border-color: rgba(255, 201, 60, .6); box-shadow: 0 0 24px -6px rgba(255, 201, 60, .55); }
+.dw-card.dw-ready .hub-sub { color: var(--gold); font-weight: 700; }
+.dw-banner { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; margin-bottom: 12px; padding: 12px 14px; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); }
+.dw-banner.ready { border-color: rgba(255, 201, 60, .55); background: linear-gradient(135deg, rgba(255, 201, 60, .14), transparent 60%), var(--surface); box-shadow: 0 8px 26px -12px rgba(255, 201, 60, .55); }
+.dw-b-ic { font-size: 30px; } .dw-b-t { flex: 1; min-width: 0; } .dw-b-t b { display: block; font-size: 14px; } .dw-b-t small { color: var(--muted); font-size: 11.5px; }
+.dw-b-go { font-weight: 800; font-size: 12.5px; color: var(--gold); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .dw-spin { animation: none; } }
+.lite .dw-spin { animation: none !important; }
